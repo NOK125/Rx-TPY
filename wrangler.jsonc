@@ -1,0 +1,28 @@
+// ตั้งค่า Cloudflare Workers สำหรับ Rx-TPY
+// API อยู่ใน src/worker.js หน้าเว็บอยู่ใน static/ ฐานข้อมูลคือ D1 ชื่อ rx-tpy
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rx-tpy",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./static",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "rx-tpy",
+      // ใส่ Database ID ที่ได้จากหน้า D1 ใน Cloudflare dashboard
+      "database_id": "ce3c0713-3df7-45a8-ad2d-370a6c2fbe7c"
+    }
+  ],
+  "routes": [
+    { "pattern": "rx.tpy-inventory.com", "custom_domain": true }
+  ],
+  // ปิดที่อยู่ *.workers.dev และ preview URL เพื่อให้เข้าได้ทางเดียวผ่าน Cloudflare Access
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true }
+}

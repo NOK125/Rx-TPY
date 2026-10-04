@@ -1,0 +1,217 @@
+[
+ {
+  "key": "adr",
+  "group": "ความปลอดภัยด้านยา",
+  "title": "แพ้ยา / ADR",
+  "patient": true,
+  "date_label": "วันที่ประเมิน",
+  "fields": [
+   {"name": "drug", "label": "ยาที่สงสัย", "type": "text", "required": true, "placeholder": "เช่น Amoxicillin 500 mg"},
+   {"name": "adr_type", "label": "ประเภท", "type": "select", "required": true, "options": ["แพ้ยา (Allergy)", "อาการไม่พึงประสงค์ (Side effect)"]},
+   {"name": "reaction", "label": "อาการที่พบ", "type": "textarea", "required": true, "placeholder": "เช่น ผื่นแดงคันทั่วตัว หลังกินยา 2 ชม."},
+   {"name": "onset", "label": "วันที่เกิดอาการ", "type": "date"},
+   {"name": "naranjo", "label": "คะแนน Naranjo", "type": "number", "min": -4, "max": 13},
+   {"name": "causality", "label": "ระดับความน่าจะเป็น", "type": "select", "required": true, "options": ["ใช่แน่นอน (Certain)", "น่าจะใช่ (Probable)", "อาจจะใช่ (Possible)", "น่าสงสัย (Doubtful)"]},
+   {"name": "seriousness", "label": "ความรุนแรง", "type": "select", "required": true, "options": ["ไม่ร้ายแรง (Non-serious)", "ร้ายแรง (Serious)"]},
+   {"name": "outcome", "label": "ผลลัพธ์", "type": "select", "options": ["หาย", "ดีขึ้น", "ยังไม่หาย", "เสียชีวิต", "ไม่ทราบ"]},
+   {"name": "card", "label": "บัตรแพ้ยา", "type": "select", "options": ["ออกบัตรแล้ว", "ยังไม่ออกบัตร", "ไม่ต้องออกบัตร"]},
+   {"name": "his", "label": "บันทึกแพ้ยาใน HIS", "type": "select", "options": ["บันทึกแล้ว", "ยังไม่บันทึก"]},
+   {"name": "note", "label": "หมายเหตุ", "type": "textarea"}
+  ],
+  "list": ["drug", "adr_type", "causality", "seriousness", "card"],
+  "stats": ["adr_type", "causality", "seriousness"]
+ },
+ {
+  "key": "med_error",
+  "group": "ความปลอดภัยด้านยา",
+  "title": "Med error / DRP",
+  "patient": true,
+  "patient_optional": true,
+  "date_label": "วันที่เกิดเหตุ",
+  "fields": [
+   {"name": "kind", "label": "ประเภท", "type": "select", "required": true, "options": ["Medication error", "Drug related problem (DRP)"]},
+   {"name": "stage", "label": "ขั้นตอนที่เกิด", "type": "select", "required": true, "options": ["Prescribing (สั่งใช้ยา)", "Transcribing (คัดลอกคำสั่ง)", "Pre-dispensing (จัดยา)", "Dispensing (จ่ายยา)", "Administration (บริหารยา)", "Monitoring (ติดตามผล)"]},
+   {"name": "unit", "label": "หน่วยงานที่เกิด", "type": "text", "placeholder": "เช่น OPD, ER, IPD"},
+   {"name": "drug", "label": "ยาที่เกี่ยวข้อง", "type": "text"},
+   {"name": "error_type", "label": "ลักษณะความคลาดเคลื่อน / ปัญหา", "type": "select", "required": true, "options": ["ผิดชนิดยา", "ผิดขนาด / ความแรง", "ผิดจำนวน", "ผิดวิธีใช้ / ฉลาก", "ผิดผู้ป่วย", "ผิดเวลา", "ยาซ้ำซ้อน", "ยาตีกัน (Drug interaction)", "แพ้ยาซ้ำ", "ขาดยา / ลืมสั่ง", "ข้อบ่งใช้ไม่เหมาะสม", "อาการไม่พึงประสงค์", "อื่น ๆ"]},
+   {"name": "severity", "label": "ระดับความรุนแรง (NCC MERP)", "type": "select", "required": true, "options": ["A — มีโอกาสเกิด แต่ยังไม่เกิด", "B — เกิดแล้ว แต่ไม่ถึงผู้ป่วย", "C — ถึงผู้ป่วย ไม่เกิดอันตราย", "D — ถึงผู้ป่วย ต้องเฝ้าระวัง", "E — เกิดอันตรายชั่วคราว ต้องรักษา", "F — อันตรายชั่วคราว ต้องนอน รพ. / นานขึ้น", "G — อันตรายถาวร", "H — ต้องช่วยชีวิต", "I — เสียชีวิต"]},
+   {"name": "detail", "label": "รายละเอียดเหตุการณ์", "type": "textarea", "required": true},
+   {"name": "action", "label": "การแก้ไข", "type": "textarea"},
+   {"name": "prevent", "label": "แนวทางป้องกัน", "type": "textarea"}
+  ],
+  "list": ["kind", "stage", "error_type", "severity"],
+  "stats": ["kind", "stage", "severity"]
+ },
+ {
+  "key": "offhour_rx",
+  "group": "ความปลอดภัยด้านยา",
+  "title": "ตรวจใบสั่งยานอกเวลาราชการ",
+  "date_label": "วันที่ตรวจ",
+  "fields": [
+   {"name": "service_date", "label": "วันที่จ่ายยา", "type": "date", "required": true},
+   {"name": "shift", "label": "ช่วงเวลา", "type": "select", "required": true, "options": ["เวรบ่าย (16.00–24.00)", "เวรดึก (00.00–08.00)", "วันหยุดราชการ"]},
+   {"name": "unit", "label": "หน่วยงานที่จ่ายยา", "type": "text", "placeholder": "เช่น ER"},
+   {"name": "total_rx", "label": "จำนวนใบสั่งยาที่ตรวจ", "type": "number", "required": true, "min": 0, "unit": "ใบ"},
+   {"name": "error_rx", "label": "จำนวนใบที่พบปัญหา", "type": "number", "required": true, "min": 0, "unit": "ใบ"},
+   {"name": "problems", "label": "ปัญหาที่พบ", "type": "textarea"},
+   {"name": "action", "label": "การแก้ไข / แจ้งแพทย์", "type": "textarea"}
+  ],
+  "list": ["service_date", "shift", "total_rx", "error_rx"],
+  "stats": ["shift"],
+  "sums": ["total_rx", "error_rx"],
+  "rate": {"label": "อัตราใบสั่งยาที่พบปัญหา", "num": "error_rx", "den": "total_rx"}
+ },
+ {
+  "key": "counsel",
+  "group": "งานบริการผู้ป่วย",
+  "title": "ให้คำปรึกษาด้านยา",
+  "patient": true,
+  "date_label": "วันที่ให้คำปรึกษา",
+  "fields": [
+   {"name": "topic", "label": "หัวข้อ", "type": "multi", "required": true, "options": ["ยาพ่นสูด (Inhaler)", "อินซูลิน", "วาร์ฟาริน", "ยาเหน็บ / ยาสอด", "ยาหยอด / ป้ายตา", "ความร่วมมือในการใช้ยา", "ผู้ป่วยได้รับยาใหม่", "ยากลับบ้าน", "อื่น ๆ"]},
+   {"name": "drugs", "label": "ยาที่ให้คำปรึกษา", "type": "textarea"},
+   {"name": "problem", "label": "ปัญหาที่พบ", "type": "textarea"},
+   {"name": "advice", "label": "คำแนะนำ", "type": "textarea"},
+   {"name": "result", "label": "ผล", "type": "select", "options": ["ผู้ป่วยเข้าใจ ใช้ยาได้ถูกต้อง", "ต้องติดตามซ้ำ"]},
+   {"name": "next_visit", "label": "วันนัดครั้งถัดไป", "type": "date"}
+  ],
+  "list": ["topic", "result", "next_visit"],
+  "stats": ["topic", "result"]
+ },
+ {
+  "key": "medrec",
+  "group": "งานบริการผู้ป่วย",
+  "title": "Med reconciliation",
+  "patient": true,
+  "fields": [
+   {"name": "setting", "label": "ช่วงที่ทำ", "type": "select", "required": true, "options": ["แรกรับ (Admission)", "ย้ายหอผู้ป่วย (Transfer)", "จำหน่าย (Discharge)", "ผู้ป่วยนอก"]},
+   {"name": "ward", "label": "หอผู้ป่วย / หน่วยงาน", "type": "text"},
+   {"name": "source", "label": "แหล่งข้อมูลยาเดิม", "type": "multi", "options": ["ยาที่ผู้ป่วยนำมา", "ประวัติใน HIS", "ใบส่งตัว", "สมุดประจำตัวผู้ป่วย", "สัมภาษณ์ผู้ป่วย / ญาติ"]},
+   {"name": "home_meds", "label": "จำนวนรายการยาเดิม", "type": "number", "min": 0, "unit": "รายการ"},
+   {"name": "discrepancies", "label": "จำนวนความคลาดเคลื่อนที่พบ", "type": "number", "required": true, "min": 0, "unit": "รายการ"},
+   {"name": "discrepancy_type", "label": "ลักษณะความคลาดเคลื่อน", "type": "multi", "options": ["ยาเดิมไม่ได้สั่ง (Omission)", "ขนาดยาต่างกัน", "ความถี่ / เวลาต่างกัน", "ยาซ้ำซ้อน", "สั่งยาที่ไม่ได้ใช้แล้ว (Commission)", "อื่น ๆ"]},
+   {"name": "action", "label": "การจัดการ / ประสานแพทย์", "type": "textarea"},
+   {"name": "accepted", "label": "ผลการประสาน", "type": "select", "options": ["แพทย์ยอมรับ", "แพทย์ไม่ยอมรับ", "รอผล", "ไม่ต้องประสาน"]}
+  ],
+  "list": ["setting", "ward", "discrepancies", "accepted"],
+  "stats": ["setting", "accepted"],
+  "sums": ["home_meds", "discrepancies"]
+ },
+ {
+  "key": "warfarin",
+  "group": "คลินิก",
+  "title": "คลินิกวาร์ฟาริน",
+  "patient": true,
+  "date_label": "วันที่มารับบริการ",
+  "fields": [
+   {"name": "indication", "label": "ข้อบ่งใช้", "type": "select", "options": ["AF", "DVT / PE", "ลิ้นหัวใจเทียม", "อื่น ๆ"]},
+   {"name": "target_inr", "label": "เป้าหมาย INR", "type": "select", "options": ["2.0–3.0", "2.5–3.5"]},
+   {"name": "inr", "label": "ค่า INR", "type": "number", "required": true, "min": 0, "max": 20},
+   {"name": "inr_status", "label": "INR เทียบเป้าหมาย", "type": "select", "required": true, "options": ["อยู่ในเป้าหมาย", "ต่ำกว่าเป้า", "สูงกว่าเป้า"]},
+   {"name": "weekly_dose", "label": "ขนาดยาเดิม", "type": "number", "min": 0, "unit": "mg/สัปดาห์"},
+   {"name": "dose_change", "label": "การปรับยา", "type": "select", "options": ["คงเดิม", "เพิ่มขนาด", "ลดขนาด", "หยุดยาชั่วคราว"]},
+   {"name": "new_weekly_dose", "label": "ขนาดยาใหม่", "type": "number", "min": 0, "unit": "mg/สัปดาห์"},
+   {"name": "bleeding", "label": "ภาวะเลือดออก", "type": "select", "options": ["ไม่มี", "เล็กน้อย (Minor)", "รุนแรง (Major)"]},
+   {"name": "adherence", "label": "ความร่วมมือในการใช้ยา", "type": "select", "options": ["ดี (สม่ำเสมอ)", "ไม่สม่ำเสมอ", "ไม่ใช้ยาตามสั่ง"]},
+   {"name": "interaction", "label": "ยา / อาหาร / สมุนไพรที่มีผล", "type": "textarea"},
+   {"name": "note", "label": "ปัญหาและคำแนะนำ", "type": "textarea"},
+   {"name": "next_visit", "label": "วันนัดครั้งถัดไป", "type": "date"}
+  ],
+  "list": ["inr", "inr_status", "dose_change", "bleeding", "next_visit"],
+  "stats": ["inr_status", "bleeding", "adherence"]
+ },
+ {
+  "key": "copd",
+  "group": "คลินิก",
+  "title": "คลินิก COPD",
+  "patient": true,
+  "date_label": "วันที่มารับบริการ",
+  "fields": [
+   {"name": "inhaler", "label": "ยาพ่นที่ใช้", "type": "text", "placeholder": "เช่น Seretide Evohaler, Berodual MDI"},
+   {"name": "technique", "label": "เทคนิคการพ่นยา", "type": "select", "required": true, "options": ["ถูกต้อง", "ไม่ถูกต้อง แก้ไขแล้ว", "ไม่ถูกต้อง ต้องติดตาม"]},
+   {"name": "cat", "label": "CAT score", "type": "number", "min": 0, "max": 40},
+   {"name": "mmrc", "label": "mMRC", "type": "select", "options": ["0", "1", "2", "3", "4"]},
+   {"name": "exacerbation", "label": "อาการกำเริบตั้งแต่ครั้งก่อน", "type": "number", "min": 0, "unit": "ครั้ง"},
+   {"name": "smoking", "label": "การสูบบุหรี่", "type": "select", "options": ["ไม่สูบ", "เลิกแล้ว", "ยังสูบ"]},
+   {"name": "adherence", "label": "ความร่วมมือในการใช้ยา", "type": "select", "options": ["ดี (สม่ำเสมอ)", "ไม่สม่ำเสมอ", "ไม่ใช้ยาตามสั่ง"]},
+   {"name": "note", "label": "ปัญหาและคำแนะนำ", "type": "textarea"},
+   {"name": "next_visit", "label": "วันนัดครั้งถัดไป", "type": "date"}
+  ],
+  "list": ["technique", "cat", "exacerbation", "smoking", "next_visit"],
+  "stats": ["technique", "smoking", "adherence"]
+ },
+ {
+  "key": "dm",
+  "group": "คลินิก",
+  "title": "คลินิก DM",
+  "patient": true,
+  "date_label": "วันที่มารับบริการ",
+  "fields": [
+   {"name": "fbs", "label": "FBS", "type": "number", "min": 0, "unit": "mg/dL"},
+   {"name": "hba1c", "label": "HbA1c", "type": "number", "min": 0, "max": 25, "unit": "%"},
+   {"name": "insulin", "label": "การฉีดอินซูลิน", "type": "select", "required": true, "options": ["ไม่ได้ใช้อินซูลิน", "ฉีดถูกต้อง", "ฉีดไม่ถูกต้อง แก้ไขแล้ว", "ฉีดไม่ถูกต้อง ต้องติดตาม"]},
+   {"name": "hypo", "label": "ภาวะน้ำตาลต่ำ", "type": "select", "options": ["ไม่มี", "มี"]},
+   {"name": "adherence", "label": "ความร่วมมือในการใช้ยา", "type": "select", "options": ["ดี (สม่ำเสมอ)", "ไม่สม่ำเสมอ", "ไม่ใช้ยาตามสั่ง"]},
+   {"name": "drp", "label": "ปัญหาจากการใช้ยา (DRP)", "type": "textarea"},
+   {"name": "note", "label": "คำแนะนำ", "type": "textarea"},
+   {"name": "next_visit", "label": "วันนัดครั้งถัดไป", "type": "date"}
+  ],
+  "list": ["fbs", "hba1c", "insulin", "hypo", "next_visit"],
+  "stats": ["insulin", "hypo", "adherence"]
+ },
+ {
+  "key": "stock_check",
+  "group": "งานบริหาร",
+  "title": "ตรวจสอบ STOCK หน่วยบริการ",
+  "date_label": "วันที่ตรวจ",
+  "fields": [
+   {"name": "unit", "label": "หน่วยบริการ", "type": "text", "required": true, "placeholder": "เช่น ER, IPD, LR, รพ.สต."},
+   {"name": "items_checked", "label": "จำนวนรายการที่ตรวจ", "type": "number", "min": 0, "unit": "รายการ"},
+   {"name": "expired", "label": "ยาหมดอายุ", "type": "number", "min": 0, "unit": "รายการ"},
+   {"name": "near_expiry", "label": "ยาใกล้หมดอายุ (ไม่เกิน 6 เดือน)", "type": "number", "min": 0, "unit": "รายการ"},
+   {"name": "mismatch", "label": "ยอดไม่ตรงกับบัญชี", "type": "number", "min": 0, "unit": "รายการ"},
+   {"name": "storage", "label": "การเก็บรักษา", "type": "select", "options": ["เหมาะสม", "ไม่เหมาะสม"]},
+   {"name": "fridge", "label": "อุณหภูมิตู้เย็นยา", "type": "select", "options": ["อยู่ในเกณฑ์ 2–8 °C", "นอกเกณฑ์", "ไม่มีตู้เย็นยา"]},
+   {"name": "high_alert", "label": "ยา High alert แยกเก็บ / ติดฉลาก", "type": "select", "options": ["ถูกต้อง", "ไม่ถูกต้อง", "ไม่มียา High alert"]},
+   {"name": "findings", "label": "สิ่งที่พบ", "type": "textarea"},
+   {"name": "action", "label": "การแก้ไข", "type": "textarea"}
+  ],
+  "list": ["unit", "items_checked", "expired", "near_expiry", "mismatch"],
+  "stats": ["storage", "fridge", "high_alert"],
+  "sums": ["items_checked", "expired", "near_expiry", "mismatch"]
+ },
+ {
+  "key": "purchase",
+  "group": "งานบริหาร",
+  "title": "งานจัดซื้อ",
+  "date_label": "วันที่ขอซื้อ",
+  "fields": [
+   {"name": "doc_no", "label": "เลขที่ใบสั่งซื้อ / PO", "type": "text"},
+   {"name": "vendor", "label": "บริษัท / ผู้ขาย", "type": "text", "required": true},
+   {"name": "method", "label": "วิธีจัดซื้อ", "type": "select", "options": ["เฉพาะเจาะจง", "e-bidding", "จัดซื้อร่วม", "อื่น ๆ"]},
+   {"name": "items", "label": "รายการยา", "type": "textarea", "required": true},
+   {"name": "amount", "label": "มูลค่า", "type": "number", "min": 0, "unit": "บาท"},
+   {"name": "status", "label": "สถานะ", "type": "select", "required": true, "options": ["ขออนุมัติ", "สั่งซื้อแล้ว", "รับของแล้ว", "ตรวจรับแล้ว", "ยกเลิก"]},
+   {"name": "received_date", "label": "วันที่รับของ", "type": "date"},
+   {"name": "invoice_no", "label": "เลขที่ใบส่งของ", "type": "text"},
+   {"name": "note", "label": "หมายเหตุ", "type": "textarea"}
+  ],
+  "list": ["doc_no", "vendor", "amount", "status"],
+  "stats": ["status", "method"],
+  "sums": ["amount"]
+ },
+ {
+  "key": "duty",
+  "group": "งานบริหาร",
+  "title": "ตารางเวร",
+  "view": "calendar",
+  "date_label": "วันที่",
+  "fields": [
+   {"name": "shift", "label": "เวร", "type": "select", "required": true, "options": ["เวรเช้า (08.00–16.00)", "เวรบ่าย (16.00–24.00)", "เวรดึก (00.00–08.00)", "เวรวันหยุด", "On call"]},
+   {"name": "staff", "label": "เภสัชกร", "type": "staff", "required": true},
+   {"name": "note", "label": "หมายเหตุ", "type": "text"}
+  ],
+  "list": ["shift", "staff", "note"],
+  "stats": ["staff", "shift"]
+ }
+]

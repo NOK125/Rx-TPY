@@ -1,0 +1,10 @@
+# ฐานข้อมูลจริงมีข้อมูลผู้ป่วย ห้ามขึ้น GitHub
+data/
+*.db
+*.db-*
+__pycache__/
+*.pyc
+# Cloudflare / Node
+node_modules/
+.wrangler/
+.dev.vars
