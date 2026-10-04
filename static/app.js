@@ -879,7 +879,7 @@ async function offhourView(m) {
     open: (id) => openRecord(id),
     import: () => importOffhour(m),
     xlsx: () => needData() && downloadBlob(offhourWorkbook(offhourStats(shown), periodLabel()),
-      safeFileName(`รายงานผลการตรวจใบสั่งยานอกเวลา ${periodLabel()}.xlsx`)),
+      safeFileName(`รายงานผลการตรวจใบสั่งยานอกเวลาราชการ ${periodLabel()}.xlsx`)),
     pdf: () => needData() && offhourDownloadPdf(offhourStats(shown), periodLabel()),
   });
   draw();
@@ -997,7 +997,7 @@ const ratio = (a, b) => (b ? round2(a * 100 / b) : "");
 
 // ---------- ดาวน์โหลดผลตรวจใบสั่งยานอกเวลา: Excel และ PDF ----------
 
-const OFFHOUR_TITLE = "รายงานผลการตรวจใบสั่งยานอกเวลา กลุ่มงานเภสัชกรรม โรงพยาบาลตาพระยา";
+const OFFHOUR_TITLE = "รายงานผลการตรวจใบสั่งยานอกเวลาราชการ กลุ่มงานเภสัชกรรม โรงพยาบาลตาพระยา";
 
 function offhourWorkbook(s, periodLabel) {
   const rows = [...s.rows].sort((a, b) => a.record_date.localeCompare(b.record_date) || a.id - b.id);
@@ -1070,7 +1070,7 @@ function printOffhour(s, periodLabel, withDetail) {
     <div class="report-head">
       <img src="logo.png" alt="">
       <div>
-        <h1>รายงานผลการตรวจใบสั่งยานอกเวลา</h1>
+        <h1>รายงานผลการตรวจใบสั่งยานอกเวลาราชการ</h1>
         <p>กลุ่มงานเภสัชกรรม โรงพยาบาลตาพระยา</p>
         <p>ช่วงเวลา: <b>${esc(periodLabel)}</b> · พิมพ์เมื่อ ${longDate()} โดย ${esc(me.full_name)}</p>
       </div>
@@ -1080,7 +1080,7 @@ function printOffhour(s, periodLabel, withDetail) {
   </div>`;
   // ชื่อไฟล์ PDF ที่เบราว์เซอร์เสนอมาจากชื่อหน้าเว็บ
   const title = document.title;
-  document.title = safeFileName(`รายงานผลการตรวจใบสั่งยานอกเวลา ${periodLabel}`);
+  document.title = safeFileName(`รายงานผลการตรวจใบสั่งยานอกเวลาราชการ ${periodLabel}`);
   window.addEventListener("afterprint", () => { document.title = title; }, { once: true });
   window.print();
 }
