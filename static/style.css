@@ -16,6 +16,32 @@
   --info-bg: #dbeafe;
   --soft: #e6f4f2;
   --radius: 10px;
+  --shadow: #0f2a2a1f;
+  /* แบนเนอร์หน้าแรก (โทนเดียวกับโลโก้ รพ.) */
+  --hero-from: #0f766e;
+  --hero-to: #1b7a8c;
+  --hero-text: #ffffff;
+  --hero-muted: #d5f3ee;
+  --hero-glow: #ffffff1f;
+  --hero-btn: #fdbd5c;
+  --hero-btn-text: #3b2a06;
+  /* ภาพประกอบยา */
+  --ill-bottle: #f6a93b;
+  --ill-cap: #f1f5f9;
+  --ill-label: #ffffff;
+  --ill-shine: #ffffff59;
+  --ill-rx: #0f766e;
+  --ill-capsule-a: #7cc2b5;
+  --ill-capsule-b: #ffffff;
+  --ill-pill: #ffffff;
+  --ill-pill-b: #fdbd5c;
+  --ill-line: #cbd5e1;
+  --ill-spark: #ffffffcc;
+  /* สีประจำกลุ่มงาน */
+  --g0: #be123c; --g0-bg: #ffe4e6;
+  --g1: #1d4ed8; --g1-bg: #dbeafe;
+  --g2: #0f766e; --g2-bg: #ccfbf1;
+  --g3: #b45309; --g3-bg: #fef3c7;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -36,6 +62,29 @@
     --info: #93c5fd;
     --info-bg: #1e3a8a66;
     --soft: #134e4a66;
+    --shadow: #00000066;
+    --hero-from: #134e4a;
+    --hero-to: #164e63;
+    --hero-text: #ecfeff;
+    --hero-muted: #a5d8d0;
+    --hero-glow: #ffffff12;
+    --hero-btn: #fbbf24;
+    --hero-btn-text: #2a1d02;
+    --ill-bottle: #d98a1f;
+    --ill-cap: #cbd5e1;
+    --ill-label: #e2e8f0;
+    --ill-shine: #ffffff33;
+    --ill-rx: #0f766e;
+    --ill-capsule-a: #5fa89b;
+    --ill-capsule-b: #e2e8f0;
+    --ill-pill: #e2e8f0;
+    --ill-pill-b: #e0a43f;
+    --ill-line: #94a3b8;
+    --ill-spark: #ffffff99;
+    --g0: #fb7185; --g0-bg: #88133755;
+    --g1: #93c5fd; --g1-bg: #1e3a8a66;
+    --g2: #2dd4bf; --g2-bg: #134e4a88;
+    --g3: #fbbf24; --g3-bg: #78350f66;
     color-scheme: dark;
   }
 }
@@ -58,7 +107,8 @@ small, .muted { color: var(--muted); }
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
-.brand { font-weight: 700; font-size: 1.1rem; color: var(--primary); }
+.brand { display: flex; align-items: center; gap: .6rem; font-weight: 700; font-size: 1.1rem; color: var(--primary); text-decoration: none; }
+.brand img { height: 34px; width: auto; }
 .brand small { font-weight: 400; margin-left: .35rem; color: var(--muted); }
 #menu-btn { display: none; }
 #userbox { display: flex; align-items: center; gap: .4rem; margin-left: auto; }
@@ -149,6 +199,51 @@ td .btn { vertical-align: middle; }
 .empty { color: var(--muted); padding: 1rem; margin: 0; }
 .hint { background: var(--soft); border-radius: 8px; padding: .5rem .7rem; font-size: .9rem; margin: 0 0 .8rem; }
 
+/* หน้าแรก */
+.hero {
+  display: grid; grid-template-columns: minmax(0, 1fr) 280px; align-items: center; gap: 1rem;
+  padding: 1.6rem 1.8rem; margin-bottom: 1.4rem; border-radius: 18px; overflow: hidden;
+  background: linear-gradient(135deg, var(--hero-from), var(--hero-to)); color: var(--hero-text);
+}
+.hero h1 { font-size: 1.65rem; margin: .15rem 0 .25rem; }
+.hero p { margin: 0; color: var(--hero-muted); }
+.hero .hero-kicker { font-size: .9rem; font-weight: 600; letter-spacing: .01em; }
+.hero-search { display: flex; gap: .5rem; margin-top: 1.1rem; max-width: 440px; }
+.hero-search input { flex: 1; min-width: 0; background: var(--surface); border-color: transparent; padding: .6rem .8rem; }
+.hero-search .btn { background: var(--hero-btn); color: var(--hero-btn-text); border-color: transparent; font-weight: 700; padding: .55rem 1.1rem; }
+.hero-art { width: 100%; height: auto; }
+.pill-art .ill-glow { fill: var(--hero-glow); }
+.pill-art .ill-bottle { fill: var(--ill-bottle); }
+.pill-art .ill-cap { fill: var(--ill-cap); }
+.pill-art .ill-label { fill: var(--ill-label); }
+.pill-art .ill-shine { fill: var(--ill-shine); }
+.pill-art .ill-rx { fill: var(--ill-rx); font: 800 30px "Segoe UI", Tahoma, sans-serif; }
+.pill-art .ill-capsule-a { fill: var(--ill-capsule-a); }
+.pill-art .ill-capsule-b { fill: var(--ill-capsule-b); }
+.pill-art .ill-pill { fill: var(--ill-pill); }
+.pill-art .ill-pill-b { fill: var(--ill-pill-b); }
+.pill-art .ill-line { stroke: var(--ill-line); stroke-width: 3; stroke-linecap: round; }
+.pill-art .ill-spark { stroke: var(--ill-spark); stroke-width: 4; stroke-linecap: round; fill: none; }
+
+.group-title { display: flex; align-items: center; gap: .5rem; }
+.group-title i { width: .6rem; height: .6rem; border-radius: 50%; background: var(--acc); }
+.g0 { --acc: var(--g0); --acc-bg: var(--g0-bg); }
+.g1 { --acc: var(--g1); --acc-bg: var(--g1-bg); }
+.g2 { --acc: var(--g2); --acc-bg: var(--g2-bg); }
+.g3 { --acc: var(--g3); --acc-bg: var(--g3-bg); }
+.mod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .75rem; }
+.mod-card {
+  display: flex; align-items: center; gap: .85rem; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: .85rem 1rem;
+  transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+}
+.mod-card:hover { transform: translateY(-2px); box-shadow: 0 8px 18px var(--shadow); border-color: var(--acc); }
+.mod-card b { display: block; font-size: 1.5rem; line-height: 1.1; }
+.mod-card span span { font-size: .88rem; color: var(--muted); }
+.mod-icon { flex: none; display: grid; place-items: center; width: 46px; height: 46px; border-radius: 13px; background: var(--acc-bg); color: var(--acc); }
+.icon { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.grid2 { margin-top: 1.2rem; }
+
 /* สรุปรายเดือน */
 .group-title { font-size: .95rem; color: var(--muted); margin: 1.2rem 0 .5rem; }
 .stats-card { padding: .7rem 1rem; }
@@ -234,7 +329,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 
 /* หน้าเข้าสู่ระบบ */
 body.auth #tabs, body.auth #userbox { display: none; }
-.auth-card { max-width: 400px; margin: 3rem auto; padding: 1.5rem; }
+.auth-card { max-width: 420px; margin: 2rem auto; padding: 1.5rem; }
+.auth-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .6rem; }
+.auth-head img { width: 58%; height: auto; }
+.auth-art { width: 38%; height: auto; }
+.auth-art .ill-glow { fill: var(--soft); }
+.auth-title { margin: 0 0 1rem; color: var(--muted); font-weight: 600; }
 .auth-card .btn.block { margin-top: 1.2rem; }
 
 #toast {
@@ -260,6 +360,13 @@ body.auth #tabs, body.auth #userbox { display: none; }
   main { padding: 1rem 1rem 3rem; }
   .toolbar input, .toolbar select { min-width: 0; flex: 1; }
   .brand small { display: none; }
+  .brand img { height: 28px; }
+  .hero { grid-template-columns: 1fr; padding: 1.2rem; }
+  .hero h1 { font-size: 1.3rem; }
+  .hero-art { max-width: 170px; justify-self: center; margin-bottom: -.5rem; }
+  .mod-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; }
+  .mod-card { flex-direction: column; align-items: flex-start; gap: .55rem; padding: .8rem; }
+  .mod-icon { width: 40px; height: 40px; border-radius: 11px; }
   #userbox { width: 100%; justify-content: space-between; }
   #userbox span { text-align: left; margin-right: auto; }
   .calendar { grid-template-columns: 1fr; }

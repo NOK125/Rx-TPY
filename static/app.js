@@ -534,6 +534,52 @@ async function patientView() {
   });
 }
 
+// ---------- ไอคอนและภาพประกอบ (SVG ในหน้า ไม่ต้องโหลดไฟล์) ----------
+
+const ICONS = {
+  home: '<path d="M3 11l9-7 9 7v9h-6v-6H9v6H3z"/>',
+  adr: '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M12 8v5M12 16.5v.01"/>',
+  med_error: '<path d="M12 3.5L2.5 20h19z"/><path d="M12 10v4M12 17v.01"/>',
+  offhour_rx: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
+  counsel: '<path d="M4 5h16v10H9l-5 4z"/><path d="M8 9h8M8 12h5"/>',
+  medrec: '<path d="M9 3h6v3H9z"/><path d="M7 4.5H5V21h14V4.5h-2"/><path d="M8.5 13.5l2 2 4.5-4.5"/>',
+  warfarin: '<path d="M12 3c3.5 4.5 6 7.7 6 11a6 6 0 0 1-12 0c0-3.3 2.5-6.5 6-11z"/>',
+  copd: '<path d="M3 8h10a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7"/>',
+  dm: '<path d="M15 3l6 6M18 6l-9.5 9.5-4-4L14 2M4.5 19.5l2-2M8 11l2 2M11 8l2 2"/>',
+  stock_check: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
+  purchase: '<path d="M3 4h2l2.5 11h11L21 7H6.2"/><circle cx="9" cy="19.5" r="1.3"/><circle cx="17" cy="19.5" r="1.3"/>',
+  duty: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+};
+const icon = (key) => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[key] || ICONS.home}</svg>`;
+
+// ภาพขวดยา Rx แคปซูล และเม็ดยา สีมาจากตัวแปร CSS (--ill-*)
+const pillArt = (cls = "") => `<svg class="pill-art ${cls}" viewBox="0 0 320 220" aria-hidden="true">
+  <circle class="ill-glow" cx="175" cy="112" r="96"/>
+  <path class="ill-spark" d="M58 46v18M49 55h18M282 160v12M276 166h12"/>
+  <rect class="ill-cap" x="130" y="34" width="62" height="26" rx="6"/>
+  <rect class="ill-bottle" x="117" y="56" width="88" height="134" rx="18"/>
+  <rect class="ill-shine" x="127" y="68" width="8" height="108" rx="4"/>
+  <rect class="ill-label" x="131" y="94" width="62" height="60" rx="9"/>
+  <text class="ill-rx" x="162" y="134" text-anchor="middle">Rx</text>
+  <g transform="rotate(-32 255 92)">
+    <rect class="ill-capsule-a" x="215" y="77" width="80" height="30" rx="15"/>
+    <path class="ill-capsule-b" d="M255 77h25a15 15 0 0 1 0 30h-25z"/>
+  </g>
+  <circle class="ill-pill" cx="62" cy="168" r="22"/>
+  <path class="ill-line" d="M47 168h30"/>
+  <circle class="ill-pill-b" cx="99" cy="194" r="13"/>
+  <circle class="ill-pill-b" cx="248" cy="196" r="9"/>
+</svg>`;
+
+const TH_DAYS = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
+function longDate(d = new Date()) {
+  return `วัน${TH_DAYS[d.getDay()]}ที่ ${d.getDate()} ${TH_MONTHS[d.getMonth()]} ${d.getFullYear() + 543}`;
+}
+function greeting(d = new Date()) {
+  const h = d.getHours();
+  return h < 12 ? "สวัสดีตอนเช้า" : h < 17 ? "สวัสดีตอนบ่าย" : "สวัสดีตอนเย็น";
+}
+
 // ---------- หน้าแรก ----------
 
 async function dashboardView() {
@@ -544,15 +590,23 @@ async function dashboardView() {
     groups.at(-1)[1].push(m);
   }
   view.innerHTML = `
-    <div class="toolbar"><h2>ภาพรวมเดือน${monthLabel(s.month)}</h2>${monthInput()}</div>
-    <form class="card" id="hn-form">
-      <label class="field"><span>ค้นหาประวัติผู้ป่วยด้วย HN</span>
-        <div class="row"><input name="hn" required placeholder="HN" autocomplete="off"><button class="btn primary">ค้นหา</button></div>
-      </label>
-    </form>
-    ${groups.map(([g, mods]) => `<h3 class="group-title">${esc(g)}</h3>
-      <section class="stats">${mods.map((m) => `<button type="button" class="stat" data-act="go" data-id="${m.key}">
-        <b>${num(s.counts[m.key] || 0)}</b><span>${esc(m.title)}</span></button>`).join("")}</section>`).join("")}
+    <section class="hero">
+      <div class="hero-text">
+        <p class="hero-kicker">${longDate()}</p>
+        <h1>${greeting()}, ${esc(me.full_name)}</h1>
+        <p>งานบริการเภสัชกรรม โรงพยาบาลตาพระยา</p>
+        <form class="hero-search" id="hn-form">
+          <input name="hn" required placeholder="ค้นหาประวัติผู้ป่วยด้วย HN" aria-label="HN" autocomplete="off">
+          <button class="btn">ค้นหา</button>
+        </form>
+      </div>
+      ${pillArt("hero-art")}
+    </section>
+    <div class="toolbar"><h2>สรุปเดือน${monthLabel(s.month)}</h2>${monthInput()}</div>
+    ${groups.map(([g, mods], gi) => `<h3 class="group-title g${gi}"><i></i>${esc(g)}</h3>
+      <section class="mod-grid">${mods.map((m) => `<button type="button" class="mod-card g${gi}" data-act="go" data-id="${m.key}">
+        <span class="mod-icon">${icon(m.key)}</span>
+        <span><b>${num(s.counts[m.key] || 0)}</b><span>${esc(m.title)}</span></span></button>`).join("")}</section>`).join("")}
     <div class="grid2">
       <section class="card"><h2>เวรวันนี้ <small>${when(s.today, false)}</small></h2>
         ${table(["เวร", "เภสัชกร", "หมายเหตุ"], s.duty_today.map((r) =>
@@ -610,6 +664,11 @@ function authScreen(setupMode) {
   $("#userbox").innerHTML = "";
   view.onclick = null;
   view.innerHTML = `<form class="card auth-card" id="auth-form">
+      <div class="auth-head">
+        <img src="logo.png" alt="โรงพยาบาลตาพระยา" width="640" height="270">
+        ${pillArt("auth-art")}
+      </div>
+      <p class="auth-title">Rx-TPY · งานบริการเภสัชกรรม</p>
       <h2>${setupMode ? "ตั้งค่าระบบครั้งแรก" : "เข้าสู่ระบบ"}</h2>
       ${setupMode ? `<p class="hint">สร้างบัญชีผู้ดูแลระบบคนแรก จากนั้นเพิ่มบัญชีเภสัชกรได้ในเมนู "ผู้ใช้"</p>` : ""}
       <div class="fields">
