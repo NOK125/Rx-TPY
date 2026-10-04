@@ -3,6 +3,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "rx-tpy",
+  "account_id": "bfdb8b89f03ebbdb5bccdd5cc62bebf0",
   "main": "src/worker.js",
   "compatibility_date": "2026-09-01",
   "assets": {

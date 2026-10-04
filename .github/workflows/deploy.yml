@@ -1,0 +1,25 @@
+# ส่งขึ้น Cloudflare Workers อัตโนมัติทุกครั้งที่ push เข้า main
+# ต้องตั้ง secret ใน GitHub: CLOUDFLARE_API_TOKEN (account_id อยู่ใน wrangler.jsonc)
+name: Deploy to Cloudflare
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: deploy
