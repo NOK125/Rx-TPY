@@ -455,6 +455,34 @@ def create_record(req):
     return get_record(req.conn, record_id)
 
 
+MAX_IMPORT = 500
+
+
+def import_records(req):
+    """นำเข้าหลายแถวพร้อมกัน (เช่น จาก Excel) ผิดแถวเดียวไม่บันทึกทั้งชุด"""
+    module = get_module(req.body.get("module"))
+    rows_in = req.body.get("rows")
+    if not isinstance(rows_in, list) or not rows_in:
+        raise ApiError(400, "ไม่มีข้อมูลที่จะนำเข้า")
+    if len(rows_in) > MAX_IMPORT:
+        raise ApiError(400, f"นำเข้าได้ครั้งละไม่เกิน {MAX_IMPORT} แถว")
+    values = []
+    for i, row in enumerate(rows_in, 1):
+        if not isinstance(row, dict):
+            raise ApiError(400, f"แถวที่ {i}: ข้อมูลไม่ถูกต้อง")
+        try:
+            values.append(record_values(module, row))
+        except ApiError as err:
+            raise ApiError(400, f"แถวที่ {row.get('_row', i)}: {err.message}")
+    ts = now()
+    for record_date, hn, patient_name, data in values:
+        record_id = req.conn.execute(
+            "INSERT INTO records (module, record_date, hn, patient_name, data, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (module["key"], record_date, hn, patient_name, json.dumps(data, ensure_ascii=False), req.user["id"], ts)).lastrowid
+        log_record(req, record_id, "import")
+    return {"inserted": len(values)}
+
+
 def can_edit(req, rec):
     if req.user["role"] != "admin" and rec["created_by"] != req.user["id"]:
         raise ApiError(403, "แก้ไขได้เฉพาะผู้บันทึกหรือผู้ดูแลระบบ")
@@ -536,6 +564,7 @@ route("GET", "/staff", list_staff)
 route("GET", "/modules", list_modules)
 route("GET", "/records", list_records)
 route("POST", "/records", create_record)
+route("POST", "/records/import", import_records)
 route("GET", f"/records/{ID}", get_record_endpoint)
 route("PUT", f"/records/{ID}", update_record)
 route("POST", f"/records/{ID}/delete", delete_record, "admin")

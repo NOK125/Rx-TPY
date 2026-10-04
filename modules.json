@@ -46,20 +46,23 @@
   "key": "offhour_rx",
   "group": "ความปลอดภัยด้านยา",
   "title": "ตรวจใบสั่งยานอกเวลาราชการ",
-  "date_label": "วันที่ตรวจ",
+  "view": "offhour",
+  "import": "offhour_excel",
+  "date_label": "วัน เดือน ปี",
   "fields": [
-   {"name": "service_date", "label": "วันที่จ่ายยา", "type": "date", "required": true},
-   {"name": "shift", "label": "ช่วงเวลา", "type": "select", "required": true, "options": ["เวรบ่าย (16.00–24.00)", "เวรดึก (00.00–08.00)", "วันหยุดราชการ"]},
-   {"name": "unit", "label": "หน่วยงานที่จ่ายยา", "type": "text", "placeholder": "เช่น ER"},
-   {"name": "total_rx", "label": "จำนวนใบสั่งยาที่ตรวจ", "type": "number", "required": true, "min": 0, "unit": "ใบ"},
-   {"name": "error_rx", "label": "จำนวนใบที่พบปัญหา", "type": "number", "required": true, "min": 0, "unit": "ใบ"},
-   {"name": "problems", "label": "ปัญหาที่พบ", "type": "textarea"},
-   {"name": "action", "label": "การแก้ไข / แจ้งแพทย์", "type": "textarea"}
+   {"name": "shift", "label": "เวร", "type": "select", "required": true, "options": ["เวรบ่าย", "เวรดึก"]},
+   {"name": "unit", "label": "หน่วยบริการ", "type": "select", "options": ["OPD", "IPD"]},
+   {"name": "total_rx", "label": "จำนวนใบสั่งยาที่คัดกรอง", "type": "number", "required": true, "min": 0, "unit": "ใบ"},
+   {"name": "error_rx", "label": "จำนวนใบสั่งยาที่มีความคลาดเคลื่อนทางยา", "type": "number", "required": true, "min": 0, "unit": "ใบ"},
+   {"name": "drp_type", "label": "DRP ที่ตรวจพบ", "type": "multi", "options": ["Dosage too low", "Dosage too high", "Drug interaction", "Improper drug selection", "Untreated indication", "Drug use without indication", "Adverse drug reaction", "Others"], "hint": "ไม่เลือก = No DRP"},
+   {"name": "drp_drugs", "label": "ยาที่เกิด DRP", "type": "textarea", "placeholder": "พิมพ์ชื่อยา ถ้ามีหลายตัวให้ขึ้นบรรทัดใหม่"},
+   {"name": "problems", "label": "หมายเหตุประเด็นที่ตรวจพบ/น่าสนใจ", "type": "textarea"},
+   {"name": "screener", "label": "ผู้คัดกรอง", "type": "staff", "required": true}
   ],
-  "list": ["service_date", "shift", "total_rx", "error_rx"],
-  "stats": ["shift"],
+  "list": ["shift", "unit", "total_rx", "error_rx", "drp_type", "screener"],
+  "stats": ["shift", "unit", "drp_type"],
   "sums": ["total_rx", "error_rx"],
-  "rate": {"label": "อัตราใบสั่งยาที่พบปัญหา", "num": "error_rx", "den": "total_rx"}
+  "rate": {"label": "ร้อยละของความคลาดเคลื่อน", "num": "error_rx", "den": "total_rx"}
  },
  {
   "key": "counsel",

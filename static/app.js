@@ -304,7 +304,7 @@ async function openHistory(m, rec) {
   let list;
   try { list = await api("GET", `/records/${rec.id}/history`); } catch (e) { return toast(e.message, true); }
   const fields = allFields(m);
-  const ACTION = { create: "สร้างบันทึก", update: "แก้ไข", delete: "ลบ" };
+  const ACTION = { create: "สร้างบันทึก", import: "นำเข้าจาก Excel", update: "แก้ไข", delete: "ลบ" };
   let prev = null;
   const items = list.map((entry) => {
     const cur = flat(entry.snapshot);
@@ -392,8 +392,24 @@ function statsHtml(m, list) {
 
 // ---------- หน้ารายการของแต่ละงาน ----------
 
+function recordsTable(m, list, emptyText) {
+  const listFields = m.list.map((n) => fieldOf(m, n));
+  return table(
+    [m.date_label || "วันที่", ...(m.patient ? ["HN", "ชื่อผู้ป่วย"] : []),
+      ...listFields.map((f) => (f.type === "number" ? [f.label, "num"] : f.label)), "ผู้บันทึก", ""],
+    list.map((r) => [
+      when(r.record_date, false),
+      ...(m.patient ? [esc(r.hn || "-"), esc(r.patient_name || "-")] : []),
+      ...listFields.map((f) => (f.type === "number" ? [showValue(f, r.data[f.name]), "num"] : showValue(f, r.data[f.name]))),
+      esc(r.created_by_name),
+      actions(btn("open", "ดู", r.id)),
+    ]),
+    emptyText);
+}
+
 async function moduleView(m) {
   if (m.view === "calendar") return calendarView(m);
+  if (m.view === "offhour") return offhourView(m);
   view.innerHTML = `<div class="toolbar">
       <h2>${esc(m.title)}</h2>
       ${monthInput()}
@@ -403,23 +419,13 @@ async function moduleView(m) {
     </div>
     <div id="stats"></div>
     <div class="list" id="list"></div>`;
-  const listFields = m.list.map((n) => fieldOf(m, n));
   let list = [];
   let shown = [];
   const draw = () => {
     const q = $("#q").value.trim().toLowerCase();
     shown = q ? list.filter((r) => recordText(r).includes(q)) : list;
     $("#stats").innerHTML = statsHtml(m, shown);
-    $("#list").innerHTML = table(
-      [m.date_label || "วันที่", ...(m.patient ? ["HN", "ชื่อผู้ป่วย"] : []),
-        ...listFields.map((f) => (f.type === "number" ? [f.label, "num"] : f.label)), "ผู้บันทึก", ""],
-      shown.map((r) => [
-        when(r.record_date, false),
-        ...(m.patient ? [esc(r.hn || "-"), esc(r.patient_name || "-")] : []),
-        ...listFields.map((f) => (f.type === "number" ? [showValue(f, r.data[f.name]), "num"] : showValue(f, r.data[f.name]))),
-        esc(r.created_by_name),
-        actions(btn("open", "ดู", r.id)),
-      ]),
+    $("#list").innerHTML = recordsTable(m, shown,
       q ? "ไม่พบบันทึกที่ค้นหา" : `ยังไม่มีบันทึก${currentMonth ? "ในเดือน" + monthLabel(currentMonth) : ""}`);
   };
   const load = async () => {
@@ -430,6 +436,457 @@ async function moduleView(m) {
   wireMonth(load);
   bind({ new: () => openRecordForm(m), open: (id) => openRecord(id), csv: () => exportCsv(m, shown) });
   await load();
+}
+
+// ---------- อ่านไฟล์ Excel (.xlsx) และ CSV ในเบราว์เซอร์ ไม่ใช้ไลบรารี ----------
+// .xlsx คือไฟล์ zip ที่ข้างในเป็น XML: อ่านสารบัญ zip แล้วแตกไฟล์ด้วย DecompressionStream ของเบราว์เซอร์
+
+async function unzip(buffer) {
+  const dv = new DataView(buffer);
+  let end = -1;
+  for (let i = buffer.byteLength - 22; i >= Math.max(0, buffer.byteLength - 65557); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { end = i; break; }
+  }
+  if (end < 0) throw new Error("ไฟล์นี้ไม่ใช่ไฟล์ Excel แบบ .xlsx");
+  const decoder = new TextDecoder();
+  const files = new Map();
+  let p = dv.getUint32(end + 16, true);
+  for (let n = dv.getUint16(end + 10, true); n > 0; n--) {
+    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error("ไฟล์ Excel เสียหาย");
+    const nameLen = dv.getUint16(p + 28, true);
+    files.set(decoder.decode(new Uint8Array(buffer, p + 46, nameLen)), {
+      method: dv.getUint16(p + 10, true), size: dv.getUint32(p + 20, true), offset: dv.getUint32(p + 42, true),
+    });
+    p += 46 + nameLen + dv.getUint16(p + 30, true) + dv.getUint16(p + 32, true);
+  }
+  return async (name) => {
+    const f = files.get(name);
+    if (!f) return null;
+    const start = f.offset + 30 + dv.getUint16(f.offset + 26, true) + dv.getUint16(f.offset + 28, true);
+    const data = new Uint8Array(buffer, start, f.size);
+    if (f.method === 0) return decoder.decode(data);
+    if (f.method !== 8) throw new Error("ไฟล์ Excel ใช้การบีบอัดแบบที่ไม่รองรับ");
+    return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).text();
+  };
+}
+
+const colIndex = (ref) => [...ref.replace(/\d+/g, "")].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+
+// คืนค่า [{ name, rows: [[ค่าแต่ละคอลัมน์]] }] ตัวเลข (รวมวันที่) เป็น number ข้อความเป็น string
+async function readXlsx(buffer) {
+  const read = await unzip(buffer);
+  const xml = async (path) => {
+    const text = await read(path);
+    return text == null ? null : new DOMParser().parseFromString(text, "application/xml");
+  };
+  const tags = (node, tag) => [...node.getElementsByTagNameNS("*", tag)];
+  const sst = await xml("xl/sharedStrings.xml");
+  const strings = sst ? tags(sst, "si").map((si) => tags(si, "t").filter((t) => t.parentNode.localName !== "rPh")
+    .map((t) => t.textContent).join("")) : [];
+  const rels = await xml("xl/_rels/workbook.xml.rels");
+  const targets = new Map(tags(rels, "Relationship").map((r) => [r.getAttribute("Id"), r.getAttribute("Target")]));
+  const sheets = [];
+  for (const s of tags(await xml("xl/workbook.xml"), "sheet")) {
+    const target = targets.get(s.getAttribute("r:id") ||
+      s.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id")) || "";
+    const doc = await xml(target.startsWith("/") ? target.slice(1) : "xl/" + target);
+    if (!doc) continue;
+    const rows = [];
+    for (const row of tags(doc, "row")) {
+      const cells = [];
+      for (const c of tags(row, "c")) {
+        const type = c.getAttribute("t");
+        const v = tags(c, "v")[0]?.textContent;
+        cells[colIndex(c.getAttribute("r"))] =
+          type === "s" ? strings[Number(v)] ?? ""
+          : type === "inlineStr" ? tags(c, "t").map((x) => x.textContent).join("")
+          : type === "str" || type === "e" ? v ?? ""
+          : v == null || v === "" ? "" : Number(v);
+      }
+      rows[Number(row.getAttribute("r")) - 1] = cells;
+    }
+    sheets.push({ name: s.getAttribute("name"), rows });
+  }
+  return sheets;
+}
+
+function parseCsv(text) {
+  const rows = [[]];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ",") { rows.at(-1).push(cell); cell = ""; }
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      rows.at(-1).push(cell); cell = ""; rows.push([]);
+    } else cell += ch;
+  }
+  rows.at(-1).push(cell);
+  return rows.map((r) => r.map((c) => (c.trim() !== "" && !Number.isNaN(Number(c)) ? Number(c) : c)));
+}
+
+async function readSpreadsheet(file) {
+  if (/\.csv$/i.test(file.name)) return [{ name: file.name, rows: parseCsv((await file.text()).replace(/^﻿/, "")) }];
+  if (!/\.xlsx$/i.test(file.name)) throw new Error("รองรับเฉพาะไฟล์ .xlsx หรือ .csv (ไฟล์ .xls ให้เปิดใน Excel แล้ว Save As เป็น .xlsx)");
+  return readXlsx(await file.arrayBuffer());
+}
+
+// วันที่จาก Excel: เลขลำดับวันของ Excel หรือข้อความ วว/ดด/ปปปป (พ.ศ. หรือ ค.ศ.)
+function excelDate(value) {
+  // รวมช่วงที่ปีเป็น พ.ศ. (เช่น 2568) ด้วย ซึ่ง fixYear จะแปลงกลับเป็น ค.ศ.
+  if (typeof value === "number" && value > 20000 && value < 300000) {
+    return new Date(Math.round((value - 25569) * 86400000)).toISOString().slice(0, 10);
+  }
+  const text = String(value ?? "").trim();
+  let m = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  let [y, mo, d] = m ? [m[1], m[2], m[3]] : [];
+  if (!m && (m = text.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/))) [d, mo, y] = [m[1], m[2], m[3]];
+  if (!y) return null;
+  y = Number(y);
+  if (y < 100) y += y > 50 ? 2400 : 2500;
+  if (y > 2400) y -= 543;
+  const iso = `${y}-${pad(mo)}-${pad(d)}`;
+  const check = new Date(iso + "T00:00:00Z");
+  return !Number.isNaN(check.getTime()) && check.toISOString().startsWith(iso) ? iso : null;
+}
+
+const cellText = (v) => {
+  const s = String(v ?? "").trim();
+  return s === "-" ? "" : s;
+};
+const cellNum = (v) => (v === "" || v == null || Number.isNaN(Number(v)) ? null : Number(v));
+
+function pickFile(accept) {
+  return new Promise((resolve) => {
+    const input = Object.assign(document.createElement("input"), { type: "file", accept });
+    input.onchange = () => resolve(input.files[0] || null);
+    input.click();
+  });
+}
+
+// ---------- นำเข้าผลตรวจใบสั่งยานอกเวลาจาก Excel ----------
+// รูปแบบไฟล์ (ทุกชีต): แถวหัวตารางขึ้นต้นด้วย "วัน เดือน ปี" แล้วตามด้วยคอลัมน์
+// A วันที่ | B เวร | C OPD/IPD | D จำนวนที่คัดกรอง | E จำนวนที่คลาดเคลื่อน | F ร้อยละ (คำนวณใหม่ ไม่นำเข้า)
+// G DRP ที่ตรวจพบ | H ยาที่เกิด DRP | I หมายเหตุ | J ผู้คัดกรอง
+
+function parseDrp(value, options) {
+  const found = new Set();
+  for (const part of String(value ?? "").split(/[\/,;\n]+/)) {
+    const p = part.trim().toLowerCase();
+    if (!p || p === "-" || p === "no drp" || p === "no") continue;
+    found.add(options.find((o) => o.toLowerCase() === p) || options.find((o) => p.includes(o.toLowerCase())) || "Others");
+  }
+  return options.filter((o) => found.has(o));
+}
+
+// ชื่อชีตแบบ "ก.ค. 68" หรือ "ส.ค.68" → { year: 2025, month: 7 } (ค.ศ.)
+function sheetMonth(name) {
+  const compact = String(name).replace(/\s+/g, "");
+  const month = TH_SHORT_MONTHS.findIndex((m) => compact.startsWith(m)) + 1;
+  const yy = compact.match(/(\d{2,4})$/)?.[1];
+  if (!month || !yy) return null;
+  const be = yy.length === 2 ? 2500 + Number(yy) : Number(yy);
+  return { year: be - 543, month };
+}
+
+// แก้ปีที่ Excel แปลงผิดเพราะพิมพ์ปี พ.ศ. เช่น 24/7/68 กลายเป็น ค.ศ. 1968 หรือ 2568 ถูกเก็บเป็น ค.ศ. 2568
+function fixYear(iso, hint) {
+  let y = Number(iso.slice(0, 4));
+  const month = Number(iso.slice(5, 7));
+  if (y > 2400) y -= 543;
+  else if (y >= 1930 && y < 2000) y += 57;
+  // ปีไม่ตรงกับชื่อชีต: ใช้ปีของชีตเมื่อเดือนตรงกัน หรือเมื่อปีห่างเกิน 1 ปี (พิมพ์ผิดแน่นอน)
+  if (hint && y !== hint.year && (month === hint.month || Math.abs(y - hint.year) > 1)) y = hint.year;
+  const fixed = `${y}${iso.slice(4)}`;
+  return new Date(fixed + "T00:00:00Z").toISOString().startsWith(fixed) ? fixed : iso;
+}
+
+function mapOffhourSheets(m, sheets) {
+  const shiftOptions = fieldOf(m, "shift").options;
+  const drpOptions = fieldOf(m, "drp_type").options;
+  const rows = [];
+  const skipped = [];
+  let blankErrors = 0;
+  let sheetsRead = 0;
+  let yearFixed = 0;
+  for (const sheet of sheets) {
+    const head = sheet.rows.findIndex((r) => cellText(r?.[0]) === "วัน เดือน ปี");
+    if (head < 0) continue;
+    sheetsRead++;
+    const hint = sheetMonth(sheet.name);
+    for (let i = head + 1; i < sheet.rows.length; i++) {
+      const c = sheet.rows[i] || [];
+      const where = `ชีต ${sheet.name} แถว ${i + 1}`;
+      const shift = cellText(c[1]);
+      if (!cellText(c[0]) && !shift) continue; // แถวว่างหรือแถวรวมท้ายตาราง
+      const rawDate = excelDate(c[0]);
+      const date = rawDate && fixYear(rawDate, hint);
+      if (date && date !== rawDate) yearFixed++;
+      const total = cellNum(c[3]);
+      if (!date) { skipped.push(`${where}: วันที่ไม่ถูกต้อง (${cellText(c[0]) || "ว่าง"})`); continue; }
+      if (!shiftOptions.includes(shift)) { skipped.push(`${where}: เวรไม่ถูกต้อง (${shift || "ว่าง"})`); continue; }
+      if (total == null || total < 0) { skipped.push(`${where}: ไม่มีจำนวนใบสั่งยาที่คัดกรอง`); continue; }
+      let errors = cellNum(c[4]);
+      if (errors == null) { errors = 0; blankErrors++; }
+      const unit = cellText(c[2]).toUpperCase();
+      rows.push({
+        _row: `${i + 1} ชีต ${sheet.name}`,
+        record_date: date, shift, unit: ["OPD", "IPD"].includes(unit) ? unit : "",
+        total_rx: total, error_rx: errors,
+        drp_type: parseDrp(c[6], drpOptions),
+        drp_drugs: cellText(c[7]), problems: cellText(c[8]),
+        screener: cellText(c[9]) || "ไม่ระบุ",
+      });
+    }
+  }
+  return { rows, skipped, blankErrors, sheetsRead, yearFixed };
+}
+
+const offhourKey = (v) => [v.record_date, v.shift, v.unit || "", Number(v.total_rx), Number(v.error_rx), v.screener].join("|");
+
+async function importOffhour(m) {
+  const file = await pickFile(".xlsx,.csv");
+  if (!file) return;
+  let parsed;
+  let existing;
+  try {
+    [parsed, existing] = await Promise.all([
+      readSpreadsheet(file).then((sheets) => mapOffhourSheets(m, sheets)),
+      api("GET", `/records?module=${m.key}`),
+    ]);
+  } catch (err) {
+    return toast(err.message, true);
+  }
+  if (!parsed.sheetsRead) return toast('ไม่พบหัวตาราง "วัน เดือน ปี" ในไฟล์นี้', true);
+  // ข้ามแถวที่มีอยู่ในระบบแล้ว จึงนำเข้าไฟล์เดิมซ้ำได้โดยไม่เกิดข้อมูลซ้ำ
+  const have = new Map();
+  for (const r of existing) {
+    const k = offhourKey({ record_date: r.record_date, ...r.data });
+    have.set(k, (have.get(k) || 0) + 1);
+  }
+  const fresh = parsed.rows.filter((r) => {
+    const k = offhourKey(r);
+    if (!have.get(k)) return true;
+    have.set(k, have.get(k) - 1);
+    return false;
+  });
+  const dates = fresh.map((r) => r.record_date).sort();
+  const info = (label, value) => `<div><small>${label}</small><div>${value}</div></div>`;
+  dlg.className = "wide";
+  dlg.innerHTML = dialogShell("นำเข้าข้อมูลจาก Excel", `
+    <p class="hint">${esc(file.name)} · อ่านได้ ${num(parsed.sheetsRead)} ชีต</p>
+    <div class="info-grid">
+      ${info("พร้อมนำเข้า", `<b>${num(fresh.length)}</b> แถว`)}
+      ${info("ช่วงวันที่", dates.length ? `${when(dates[0], false)} – ${when(dates.at(-1), false)}` : "-")}
+      ${info("มีในระบบแล้ว (ข้าม)", `${num(parsed.rows.length - fresh.length)} แถว`)}
+      ${info("ข้อมูลไม่ครบ (ข้าม)", `${num(parsed.skipped.length)} แถว`)}
+    </div>
+    ${parsed.yearFixed ? `<p class="hint">แก้ปีที่พิมพ์เป็น พ.ศ. ใน Excel ให้ถูกต้อง ${num(parsed.yearFixed)} แถว (ใช้เดือนและปีจากชื่อชีต)</p>` : ""}
+    ${parsed.blankErrors ? `<p class="hint">มี ${num(parsed.blankErrors)} แถวที่ช่องจำนวนใบสั่งยาที่คลาดเคลื่อนว่าง จะนับเป็น 0</p>` : ""}
+    ${parsed.skipped.length ? `<details><summary>ดูแถวที่ข้าม</summary><ul class="history">${parsed.skipped.slice(0, 50)
+      .map((s) => `<li>${esc(s)}</li>`).join("")}</ul></details>` : ""}
+    <p class="meta">ร้อยละของความคลาดเคลื่อนจะคำนวณใหม่จากจำนวนที่นำเข้า และบันทึกที่นำเข้าจะมีชื่อ ${esc(me.full_name)} เป็นผู้บันทึก</p>`,
+    fresh.length ? `นำเข้า ${num(fresh.length)} แถว` : null, fresh.length ? "ยกเลิก" : "ปิด");
+  wireDialog(async (_, form) => {
+    const submit = $("button[type=submit]", form);
+    let done = 0;
+    try {
+      for (let i = 0; i < fresh.length; i += 200) {
+        submit.textContent = `กำลังนำเข้า ${num(done)} / ${num(fresh.length)}`;
+        done += (await api("POST", "/records/import", { module: m.key, rows: fresh.slice(i, i + 200) })).inserted;
+      }
+    } catch (err) {
+      submit.textContent = "ลองอีกครั้ง";
+      if (done) refresh();
+      throw new Error(done ? `นำเข้าแล้ว ${num(done)} แถว แล้วเกิดข้อผิดพลาด: ${err.message} (กดนำเข้าไฟล์เดิมอีกครั้งได้ ระบบจะข้ามแถวที่นำเข้าแล้ว)` : err.message);
+    }
+    toast(`นำเข้าแล้ว ${num(done)} แถว`);
+    refresh();
+  });
+}
+
+// ---------- วิเคราะห์ผลตรวจใบสั่งยานอกเวลา ----------
+
+const TH_SHORT_MONTHS = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+const shortMonth = (ym) => { const [y, m] = ym.split("-"); return `${TH_SHORT_MONTHS[m - 1]} ${String(Number(y) + 543).slice(2)}`; };
+const fiscalYear = (iso) => Number(iso.slice(0, 4)) + (Number(iso.slice(5, 7)) >= 10 ? 1 : 0) + 543; // ปีงบ ต.ค.–ก.ย.
+const pct = (a, b) => (b ? `${(a * 100 / b).toFixed(2)}%` : "-");
+
+// แยกชื่อยาจากช่อง "ยาที่เกิด DRP" ที่เขียนได้หลายแบบ แล้วรวมชื่อเดียวกันเข้าด้วยกัน
+const DRUG_NOISE = /\b(syrup|syr|sry|susp|suspension|tab|tabs|tablet|cap|caps|capsule|inj|injection|mg|ml|ir|sr|dosage|too|low|high)\b\.?/gi;
+function drugNames(text) {
+  return String(text ?? "").split(/[\n,\/;+]+/)
+    .map((s) => s.replace(/^[\s\-•*\d.)]+/, "").replace(DRUG_NOISE, " ").replace(/[^A-Za-z฀-๿. ]/g, " ")
+      .replace(/\s+/g, " ").replace(/^\.+|\.+$/g, "").trim().toLowerCase())
+    .filter((s) => s.length > 1);
+}
+// ตัวย่อสั้น ๆ เช่น gg, ors ให้เป็นตัวพิมพ์ใหญ่ทั้งคำ
+const titleCase = (s) => (s.length <= 3 ? s.toUpperCase() : s.charAt(0).toUpperCase() + s.slice(1));
+
+function offhourStats(rows) {
+  const sum = (list, f) => list.reduce((s, r) => s + (Number(r.data[f]) || 0), 0);
+  const agg = (list) => ({
+    shifts: list.length, screened: sum(list, "total_rx"), errors: sum(list, "error_rx"),
+    drp: list.filter((r) => (r.data.drp_type || []).length).length,
+  });
+  const groupBy = (keyOf) => {
+    const map = new Map();
+    for (const r of rows) {
+      const k = keyOf(r);
+      if (!k) continue;
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(r);
+    }
+    return [...map].map(([k, list]) => [k, agg(list)]);
+  };
+  const count = (keysOf) => {
+    const map = new Map();
+    for (const r of rows) for (const k of keysOf(r)) map.set(k, (map.get(k) || 0) + 1);
+    return [...map].sort((a, b) => b[1] - a[1]);
+  };
+  return {
+    all: agg(rows),
+    byShift: groupBy((r) => r.data.shift),
+    byUnit: groupBy((r) => r.data.unit),
+    byMonth: groupBy((r) => r.record_date.slice(0, 7)).sort((a, b) => a[0].localeCompare(b[0])),
+    byScreener: groupBy((r) => r.data.screener).sort((a, b) => b[1].shifts - a[1].shifts),
+    drp: count((r) => r.data.drp_type || []),
+    drugs: count((r) => new Set(drugNames(r.data.drp_drugs))),
+    rows,
+  };
+}
+
+function barList(items, empty = "ยังไม่มีข้อมูล") {
+  if (!items.length) return `<p class="empty">${esc(empty)}</p>`;
+  const max = Math.max(...items.map((i) => i.value)) || 1;
+  return `<ul class="bars">${items.map((i) => `<li title="${esc(i.title || "")}">
+      <span class="bar-label">${esc(i.label)}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${(i.value * 100 / max).toFixed(1)}%"></span></span>
+      <span class="bar-value">${i.text ?? num(i.value)}${i.sub ? ` <small>${esc(i.sub)}</small>` : ""}</span>
+    </li>`).join("")}</ul>`;
+}
+
+function columnChart(items) {
+  if (!items.length) return `<p class="empty">ยังไม่มีข้อมูล</p>`;
+  const max = Math.max(...items.map((i) => i.value)) || 1;
+  return `<div class="cols-wrap"><div class="cols">${items.map((i) => `<div class="col" title="${esc(i.title || "")}">
+      <span class="col-value">${esc(i.text)}</span>
+      <span class="col-bar" style="height:${(i.value * 100 / max).toFixed(1)}%"></span>
+      <span class="col-label">${esc(i.label)}</span>
+    </div>`).join("")}</div></div>`;
+}
+
+const kpi = (label, value, sub = "") => `<div class="kpi"><small>${label}</small><b>${value}</b>${sub ? `<span>${sub}</span>` : ""}</div>`;
+
+function offhourAnalysis(s) {
+  const a = s.all;
+  const rateItem = ([k, v]) => ({
+    label: k, value: v.screened ? v.errors * 100 / v.screened : 0, text: pct(v.errors, v.screened),
+    sub: `${num(v.errors)}/${num(v.screened)} ใบ`, title: `${k}: ${num(v.shifts)} เวร พบ DRP ${num(v.drp)} เวร`,
+  });
+  const drpTotal = s.drp.reduce((n, [, c]) => n + c, 0);
+  const cross = [...s.byShift, ...s.byUnit].map(([k]) => k);
+  const crossCount = (type, key) => s.rows.filter((r) => (r.data.drp_type || []).includes(type) &&
+    (r.data.shift === key || r.data.unit === key)).length;
+  return `
+    <section class="kpis">
+      ${kpi("ใบสั่งยาที่คัดกรอง", num(a.screened), "ใบ")}
+      ${kpi("พบความคลาดเคลื่อนทางยา", num(a.errors), "ใบ")}
+      ${kpi("ร้อยละของความคลาดเคลื่อน", pct(a.errors, a.screened))}
+      ${kpi("เวรที่พบ DRP", num(a.drp), `จาก ${num(a.shifts)} เวร`)}
+    </section>
+    <div class="grid2 analysis">
+      <section class="card"><h2>ร้อยละความคลาดเคลื่อนรายเดือน</h2>
+        ${columnChart(s.byMonth.map(([k, v]) => ({
+          label: shortMonth(k), value: v.screened ? v.errors * 100 / v.screened : 0, text: pct(v.errors, v.screened),
+          title: `${monthLabel(k)}: คลาดเคลื่อน ${num(v.errors)} จาก ${num(v.screened)} ใบ (${num(v.shifts)} เวร)`,
+        })))}</section>
+      <section class="card"><h2>ร้อยละความคลาดเคลื่อนตามเวรและหน่วยบริการ</h2>
+        ${barList([...s.byShift, ...s.byUnit].map(rateItem))}</section>
+      <section class="card"><h2>ประเภท DRP ที่ตรวจพบ</h2>
+        ${barList(s.drp.map(([k, c]) => ({ label: k, value: c, sub: `ครั้ง · ${pct(c, drpTotal)}`, title: `${k}: ${c} ครั้ง` })),
+          "ไม่พบ DRP ในช่วงนี้")}</section>
+      <section class="card"><h2>ยาที่เกิด DRP บ่อย <small>10 อันดับ</small></h2>
+        ${barList(s.drugs.slice(0, 10).map(([k, c]) => ({ label: titleCase(k), value: c, sub: "ครั้ง" })), "ยังไม่มีข้อมูลยา")}</section>
+    </div>
+    ${s.drp.length ? `<section class="card"><h2>ประเภท DRP แยกตามเวรและหน่วยบริการ <small>จำนวนครั้ง</small></h2>
+      ${table(["ประเภท DRP", ...cross.map((k) => [k, "num"]), ["รวม", "num"]],
+        s.drp.map(([type, c]) => [esc(type), ...cross.map((k) => [num(crossCount(type, k)), "num"]), [`<b>${num(c)}</b>`, "num"]]),
+        "")}</section>` : ""}
+    <section class="card"><h2>ผู้คัดกรอง</h2>
+      ${table(["ผู้คัดกรอง", ["เวร", "num"], ["ใบสั่งยาที่คัดกรอง", "num"], ["พบคลาดเคลื่อน", "num"], ["ร้อยละ", "num"]],
+        s.byScreener.map(([k, v]) => [esc(k), [num(v.shifts), "num"], [num(v.screened), "num"], [num(v.errors), "num"],
+          [pct(v.errors, v.screened), "num"]]), "ยังไม่มีข้อมูล")}</section>`;
+}
+
+async function offhourView(m) {
+  view.innerHTML = `<div class="toolbar">
+      <h2>${esc(m.title)}</h2>
+      <select id="period" aria-label="ช่วงเวลา"></select>
+      <input type="search" id="q" placeholder="ค้นหา เช่น ชื่อยา ผู้คัดกรอง">
+      <button class="btn" data-act="import">นำเข้า Excel</button>
+      <button class="btn" data-act="csv">ส่งออก CSV</button>
+      <button class="btn primary" data-act="new">+ บันทึกใหม่</button>
+    </div>
+    <div id="analysis"></div>
+    <h3 class="group-title">รายการบันทึก</h3>
+    <div class="list" id="list"></div>`;
+  const all = await api("GET", `/records?module=${m.key}`);
+  const years = [...new Set(all.map((r) => fiscalYear(r.record_date)))].sort((a, b) => b - a);
+  const months = [...new Set(all.map((r) => r.record_date.slice(0, 7)))].sort().reverse();
+  const options = [
+    ["all", "ทั้งหมด"],
+    ...years.map((y) => [`fy:${y}`, `ปีงบประมาณ ${y}`]),
+    ...months.map((k) => [`m:${k}`, monthLabel(k)]),
+  ];
+  let period = "";
+  try { period = sessionStorage.getItem("rx-offhour-period") || ""; } catch {}
+  if (!options.some(([v]) => v === period)) period = options[0][0];
+  $("#period").innerHTML = options.map(([v, text]) => option(v, text, period)).join("");
+  let shown = [];
+  const draw = () => {
+    period = $("#period").value;
+    try { sessionStorage.setItem("rx-offhour-period", period); } catch {}
+    const [kind, val] = period.split(":");
+    const rows = all.filter((r) => (kind === "fy" ? fiscalYear(r.record_date) === Number(val)
+      : kind === "m" ? r.record_date.startsWith(val) : true));
+    const q = $("#q").value.trim().toLowerCase();
+    shown = q ? rows.filter((r) => recordText(r).includes(q)) : rows;
+    $("#analysis").innerHTML = all.length ? offhourAnalysis(offhourStats(shown))
+      : `<p class="hint">ยังไม่มีข้อมูล กด "นำเข้า Excel" เพื่อนำเข้าไฟล์ผลการตรวจใบสั่งยา หรือกด "+ บันทึกใหม่" เพื่อบันทึกทีละเวร</p>`;
+    $("#list").innerHTML = recordsTable(m, shown, q ? "ไม่พบบันทึกที่ค้นหา" : "ยังไม่มีบันทึกในช่วงนี้");
+  };
+  $("#period").onchange = draw;
+  $("#q").oninput = draw;
+  bind({ new: () => openRecordForm(m), open: (id) => openRecord(id), csv: () => exportCsv(m, shown), import: () => importOffhour(m) });
+  draw();
+}
+
+// สรุปย่อในหน้า Dashboard
+async function offhourPanel(month) {
+  const box = $("#offhour-panel");
+  if (!MOD.offhour_rx || !box) return;
+  const rows = await api("GET", `/records?module=offhour_rx&month=${month}`);
+  if (!rows.length || !box.isConnected) return;
+  const s = offhourStats(rows);
+  box.innerHTML = `<div class="panel-head"><h2>ผลตรวจใบสั่งยานอกเวลา <small>${monthLabel(month)}</small></h2>
+      ${btn("go", "ดูการวิเคราะห์ทั้งหมด", "offhour_rx")}</div>
+    <section class="kpis">
+      ${kpi("ใบสั่งยาที่คัดกรอง", num(s.all.screened), "ใบ")}
+      ${kpi("ร้อยละของความคลาดเคลื่อน", pct(s.all.errors, s.all.screened), `${num(s.all.errors)} ใบ`)}
+      ${kpi("เวรที่พบ DRP", num(s.all.drp), `จาก ${num(s.all.shifts)} เวร`)}
+    </section>
+    <div class="grid2 analysis">
+      <div><h3>ประเภท DRP</h3>${barList(s.drp.slice(0, 5).map(([k, c]) => ({ label: k, value: c, sub: "ครั้ง" })), "ไม่พบ DRP")}</div>
+      <div><h3>ยาที่เกิด DRP</h3>${barList(s.drugs.slice(0, 5).map(([k, c]) => ({ label: titleCase(k), value: c, sub: "ครั้ง" })), "ยังไม่มีข้อมูลยา")}</div>
+    </div>`;
+  box.hidden = false;
 }
 
 // ตารางเวร: แสดงเป็นปฏิทินรายเดือน (มือถือแสดงเป็นรายการวัน)
@@ -654,6 +1111,7 @@ async function dashboardView() {
       <section class="mod-grid">${mods.map((m) => `<button type="button" class="mod-card g${gi}" data-act="go" data-id="${m.key}">
         <span class="mod-icon">${icon(m.key)}</span>
         <span><b>${num(s.counts[m.key] || 0)}</b><span>${esc(m.title)}</span></span></button>`).join("")}</section>`).join("")}
+    <section class="card offhour-panel" id="offhour-panel" hidden></section>
     <div class="grid2">
       <section class="card"><h2>เวรวันนี้ <small>${when(s.today, false)}</small></h2>
         ${table(["เวร", "เภสัชกร", "หมายเหตุ"], s.duty_today.map((r) =>
@@ -669,6 +1127,7 @@ async function dashboardView() {
   $("#search-form").onsubmit = (e) => { e.preventDefault(); openSearch(e.target.q.value.trim()); };
   wireMonth(dashboardView);
   bind({ go: (key) => show(key), open: (id) => openRecord(id) });
+  offhourPanel(s.month).catch(() => {});
 }
 
 // ---------- ผู้ใช้ (ผู้ดูแลระบบ) ----------

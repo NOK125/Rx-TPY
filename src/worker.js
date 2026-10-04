@@ -409,6 +409,43 @@ async function createRecord(req) {
   return getRecord(req.db, inserted.meta.last_row_id);
 }
 
+const MAX_IMPORT = 500;
+
+const SNAPSHOT_SQL = `json_object('id', id, 'module', module, 'record_date', record_date, 'hn', hn,
+  'patient_name', patient_name, 'data', data, 'created_by', created_by, 'created_at', created_at,
+  'updated_by', updated_by, 'updated_at', updated_at, 'deleted_at', deleted_at)`;
+
+// นำเข้าหลายแถวพร้อมกัน (เช่น จาก Excel) ผิดแถวเดียวไม่บันทึกทั้งชุด
+// ใช้คำสั่งเดียวผ่าน json_each เพราะ D1 จำกัดจำนวนคำสั่งต่อครั้งและจำนวนพารามิเตอร์ต่อคำสั่ง
+async function importRecords(req) {
+  const module = getModule(req.body.module);
+  const rows = req.body.rows;
+  if (!Array.isArray(rows) || !rows.length) throw new ApiError(400, "ไม่มีข้อมูลที่จะนำเข้า");
+  if (rows.length > MAX_IMPORT) throw new ApiError(400, `นำเข้าได้ครั้งละไม่เกิน ${MAX_IMPORT} แถว`);
+  const values = rows.map((row, i) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) throw new ApiError(400, `แถวที่ ${i + 1}: ข้อมูลไม่ถูกต้อง`);
+    try {
+      const v = recordValues(module, row);
+      return { record_date: v.recordDate, hn: v.hn, patient_name: v.patientName, data: v.data };
+    } catch (err) {
+      if (err instanceof ApiError) throw new ApiError(400, `แถวที่ ${row._row ?? i + 1}: ${err.message}`);
+      throw err;
+    }
+  });
+  const ts = now();
+  await req.db.batch([
+    req.db.prepare(`INSERT INTO records (module, record_date, hn, patient_name, data, created_by, created_at)
+      SELECT ?, json_extract(value, '$.record_date'), json_extract(value, '$.hn'), json_extract(value, '$.patient_name'),
+             json_extract(value, '$.data'), ?, ?
+      FROM json_each(?) ORDER BY key`).bind(module.key, req.user.id, ts, JSON.stringify(values)),
+    // แถวที่เพิ่งเพิ่มคือ id สุดท้าย n แถว (ทั้งชุดอยู่ในทรานแซกชันเดียว)
+    req.db.prepare(`INSERT INTO record_log (record_id, action, snapshot, user_id, ts)
+      SELECT id, 'import', ${SNAPSHOT_SQL}, ?, ? FROM records
+      WHERE id > (SELECT MAX(id) FROM records) - ? ORDER BY id`).bind(req.user.id, ts, values.length),
+  ]);
+  return { inserted: values.length };
+}
+
 function canEdit(req, rec) {
   if (req.user.role !== "admin" && rec.created_by !== req.user.id) {
     throw new ApiError(403, "แก้ไขได้เฉพาะผู้บันทึกหรือผู้ดูแลระบบ");
@@ -495,6 +532,7 @@ route("GET", "/staff", listStaff);
 route("GET", "/modules", listModules);
 route("GET", "/records", listRecords);
 route("POST", "/records", createRecord);
+route("POST", "/records/import", importRecords);
 route("GET", `/records/${ID}`, getRecordEndpoint);
 route("PUT", `/records/${ID}`, updateRecord);
 route("POST", `/records/${ID}/delete`, deleteRecord, "admin");

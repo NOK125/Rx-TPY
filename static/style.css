@@ -244,6 +244,36 @@ td .btn { vertical-align: middle; }
 .icon { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .grid2 { margin-top: 1.2rem; }
 
+/* การวิเคราะห์และกราฟ (แท่งสีเดียว ตัวเลขใช้สีตัวอักษรปกติ) */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .75rem; margin-bottom: 1rem; }
+.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: .8rem 1rem; display: grid; gap: .1rem; }
+.kpi small { color: var(--muted); font-size: .85rem; }
+.kpi b { font-size: 1.6rem; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.kpi span { color: var(--muted); font-size: .82rem; }
+.analysis { gap: 1rem; margin-top: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); }
+.analysis .card { margin-bottom: 0; }
+.analysis h3 { font-size: .95rem; margin: .2rem 0 .5rem; }
+.analysis + .card, .kpis + .grid2 { margin-top: 1rem; }
+.bars { list-style: none; margin: 0; padding: 0; display: grid; gap: .45rem; }
+.bars li { display: grid; grid-template-columns: minmax(0, 10rem) minmax(0, 1fr) auto; align-items: center; gap: .6rem; font-size: .9rem; }
+.bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-track { height: 12px; }
+.bar-fill { display: block; height: 100%; min-width: 2px; background: var(--primary); border-radius: 0 4px 4px 0; }
+.bar-value { font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.bar-value small { color: var(--muted); }
+.cols-wrap { overflow-x: auto; }
+.cols { display: flex; align-items: stretch; gap: 4px; height: 210px; padding-top: .3rem; }
+.col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; flex: 1 0 32px; }
+.col-bar { width: min(26px, 70%); min-height: 2px; background: var(--primary); border-radius: 4px 4px 0 0; }
+.col-value { font-size: .72rem; font-variant-numeric: tabular-nums; margin-bottom: .2rem; white-space: nowrap; }
+.col-label { font-size: .72rem; color: var(--muted); margin-top: .3rem; padding-top: .25rem; border-top: 1px solid var(--border); width: 100%; text-align: center; white-space: nowrap; }
+.panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .8rem; }
+.panel-head h2 { margin: 0; }
+.offhour-panel { margin-top: 1.2rem; }
+.offhour-panel .kpi { background: var(--bg); }
+details { margin: .6rem 0; }
+details summary { cursor: pointer; color: var(--primary); }
+
 /* สรุปรายเดือน */
 .group-title { font-size: .95rem; color: var(--muted); margin: 1.2rem 0 .5rem; }
 .stats-card { padding: .7rem 1rem; }
@@ -359,6 +389,8 @@ body.auth #tabs, body.auth #userbox { display: none; }
 @media (max-width: 640px) {
   main { padding: 1rem 1rem 3rem; }
   .toolbar input, .toolbar select { min-width: 0; flex: 1; }
+  .toolbar h2 { flex-basis: 100%; }
+  .toolbar select, .toolbar input[type="search"], .toolbar input[type="month"] { flex: 1 1 40%; }
   .brand small { display: none; }
   .brand img { height: 28px; }
   .hero { grid-template-columns: 1fr; padding: 1.2rem; }
@@ -367,6 +399,10 @@ body.auth #tabs, body.auth #userbox { display: none; }
   .mod-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; }
   .mod-card { flex-direction: column; align-items: flex-start; gap: .55rem; padding: .8rem; }
   .mod-icon { width: 40px; height: 40px; border-radius: 11px; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; }
+  .kpi b { font-size: 1.3rem; }
+  .bars li { grid-template-columns: minmax(0, 1fr) auto; row-gap: .15rem; }
+  .bar-label { grid-column: 1 / -1; white-space: normal; }
   #userbox { width: 100%; justify-content: space-between; }
   #userbox span { text-align: left; margin-right: auto; }
   .calendar { grid-template-columns: 1fr; }

@@ -42,6 +42,10 @@ data/          ฐานข้อมูล SQLite ในเครื่อง �
 - type: `text`, `textarea`, `number`, `date`, `select`, `multi`, `staff` / คีย์อื่น: `patient`, `patient_optional`, `list`, `stats`, `sums`, `rate`, `view: "calendar"`
 - นัดหมายในหน้าแรกอ่านจากช่องชื่อ `next_visit` ของบันทึกล่าสุดต่อ (งาน, HN)
 - ประวัติแพ้ยาที่เตือนตาม HN มาจากงาน `adr` ช่อง `drug`
+- `view: "offhour"` = หน้าวิเคราะห์ของงานตรวจใบสั่งยานอกเวลา (`offhourView` ใน app.js) ส่วน `view: "calendar"` = ตารางเวร
+- นำเข้าหลายแถว: `POST /api/records/import` (ไม่เกิน 500 แถวต่อครั้ง ผิดแถวเดียวไม่บันทึกทั้งชุด) หน้าเว็บส่งทีละ 200 แถว
+  ฝั่ง Worker ต้องใช้ `json_each` คำสั่งเดียว เพราะ D1 จำกัดจำนวนคำสั่งต่อครั้งและพารามิเตอร์ต่อคำสั่ง
+- อ่าน .xlsx ในเบราว์เซอร์เอง (`readXlsx` แตก zip ด้วย DecompressionStream) ไม่ใช้ไลบรารี การจับคู่คอลัมน์ Excel อยู่ที่ `mapOffhourSheets`
 
 ## รันและทดสอบ
 
