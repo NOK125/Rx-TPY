@@ -714,8 +714,8 @@ let current = null;
 
 function buildViews() {
   VIEWS = {
-    home: { title: "หน้าแรก", render: dashboardView },
-    patient: { title: "ค้นหาผู้ป่วย", render: patientView },
+    home: { title: "Dashboard", render: dashboardView },
+    patient: { title: "ประวัติผู้ป่วย", render: patientView, hidden: true }, // เข้าจากช่องค้นหา HN ในหน้าแรก ไม่แสดงในเมนู
   };
   for (const m of MODULES) VIEWS[m.key] = { title: m.title, group: m.group, render: () => moduleView(m) };
   VIEWS.users = { title: "ผู้ใช้", group: "ตั้งค่า", render: usersView, role: "admin" };
@@ -738,7 +738,7 @@ async function show(tab) {
   let html = "";
   let group = null;
   for (const [key, v] of Object.entries(VIEWS)) {
-    if (!allowed(key)) continue;
+    if (!allowed(key) || v.hidden) continue;
     if (v.group && v.group !== group) { group = v.group; html += `<div class="nav-group">${esc(group)}</div>`; }
     html += `<button type="button" data-tab="${key}" ${key === tab ? 'aria-current="page"' : ""}>${esc(v.title)}</button>`;
   }
