@@ -22,4 +22,6 @@ jobs:
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # wrangler-action ใช้ wrangler 3 เป็นค่าเริ่มต้น แต่ wrangler.jsonc ใช้ความสามารถของ wrangler 4
+          wranglerVersion: "4"
           command: deploy
