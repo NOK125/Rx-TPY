@@ -483,6 +483,53 @@ async function calendarView(m) {
   await load();
 }
 
+// ---------- ค้นหาทั้งระบบ ----------
+
+let searchText = "";
+
+function openSearch(text) {
+  searchText = text;
+  if (current === "search") refresh(); else show("search");
+}
+
+async function searchView() {
+  view.innerHTML = `<div class="toolbar">
+      <h2>ค้นหา</h2>
+      <form id="search-page-form" class="inline-form">
+        <input type="search" name="q" placeholder="HN ชื่อผู้ป่วย ชื่อยา หรือชื่องาน" value="${esc(searchText)}" required aria-label="ค้นหา" autocomplete="off">
+        <button class="btn primary">ค้นหา</button>
+      </form>
+    </div>
+    <div id="result"></div>`;
+  $("#search-page-form").onsubmit = (e) => {
+    e.preventDefault();
+    searchText = e.target.q.value.trim();
+    searchView().catch((err) => toast(err.message, true));
+  };
+  if (!searchText) {
+    $("#result").innerHTML = `<p class="hint">พิมพ์คำที่ต้องการค้นหา เช่น HN ชื่อผู้ป่วย ชื่อยา หน่วยงาน หรือชื่องาน</p>`;
+    $("[name=q]").focus();
+    return;
+  }
+  const q = searchText.toLowerCase();
+  const menus = MODULES.filter((m) => `${m.title} ${m.group}`.toLowerCase().includes(q));
+  // เซิร์ฟเวอร์ค้นใน JSON ทั้งก้อนซึ่งรวมชื่อช่องด้วย จึงกรองซ้ำเฉพาะค่าที่กรอกจริง
+  const list = (await api("GET", `/records?q=${encodeURIComponent(searchText)}`))
+    .filter((r) => `${recordText(r)} ${r.created_by_name}`.includes(q));
+  const shown = list.slice(0, 300);
+  $("#result").innerHTML = `
+    ${menus.length ? `<section class="card"><h2>งานที่ตรงกับคำค้น</h2><div class="row">${menus.map((m) =>
+      btn("go", m.title, m.key, "primary")).join("")}</div></section>` : ""}
+    <p class="hint">พบ ${num(list.length)} บันทึกที่มีคำว่า "<b>${esc(searchText)}</b>"${list.length > shown.length ? ` (แสดง ${num(shown.length)} รายการล่าสุด)` : ""}</p>
+    <div class="list">${table(["วันที่", "งาน", "HN", "ชื่อผู้ป่วย", "สรุป", "ผู้บันทึก", ""],
+      shown.map((r) => {
+        const m = MOD[r.module];
+        return [when(r.record_date, false), esc(m?.title || r.module), esc(r.hn || "-"), esc(r.patient_name || "-"),
+          m ? summaryText(m, r) : "-", esc(r.created_by_name), actions(btn("open", "ดู", r.id))];
+      }), "ไม่พบบันทึกที่ตรงกับคำค้น")}</div>`;
+  bind({ go: (key) => show(key), open: (id) => openRecord(id) });
+}
+
 // ---------- ประวัติผู้ป่วย ----------
 
 let patientHN = "";
@@ -595,8 +642,8 @@ async function dashboardView() {
         <p class="hero-kicker">${longDate()}</p>
         <h1>${greeting()}, ${esc(me.full_name)}</h1>
         <p>งานบริการเภสัชกรรม โรงพยาบาลตาพระยา</p>
-        <form class="hero-search" id="hn-form">
-          <input name="hn" required placeholder="ค้นหาประวัติผู้ป่วยด้วย HN" aria-label="HN" autocomplete="off">
+        <form class="hero-search" id="search-form">
+          <input type="search" name="q" required placeholder="ค้นหาในระบบ เช่น HN ชื่อผู้ป่วย ชื่อยา" aria-label="ค้นหา" autocomplete="off">
           <button class="btn">ค้นหา</button>
         </form>
       </div>
@@ -619,7 +666,7 @@ async function dashboardView() {
             actions(btn("open", "ดู", r.id))];
         }), "ไม่มีนัดในช่วงนี้")}</section>
     </div>`;
-  $("#hn-form").onsubmit = (e) => { e.preventDefault(); openPatient(e.target.hn.value.trim()); };
+  $("#search-form").onsubmit = (e) => { e.preventDefault(); openSearch(e.target.q.value.trim()); };
   wireMonth(dashboardView);
   bind({ go: (key) => show(key), open: (id) => openRecord(id) });
 }
@@ -715,7 +762,9 @@ let current = null;
 function buildViews() {
   VIEWS = {
     home: { title: "Dashboard", render: dashboardView },
-    patient: { title: "ประวัติผู้ป่วย", render: patientView, hidden: true }, // เข้าจากช่องค้นหา HN ในหน้าแรก ไม่แสดงในเมนู
+    // สองหน้านี้ไม่แสดงในเมนู: เข้าจากช่องค้นหาใน Dashboard และปุ่มในหน้าบันทึก
+    search: { title: "ค้นหา", render: searchView, hidden: true },
+    patient: { title: "ประวัติผู้ป่วย", render: patientView, hidden: true },
   };
   for (const m of MODULES) VIEWS[m.key] = { title: m.title, group: m.group, render: () => moduleView(m) };
   VIEWS.users = { title: "ผู้ใช้", group: "ตั้งค่า", render: usersView, role: "admin" };
