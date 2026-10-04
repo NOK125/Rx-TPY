@@ -624,7 +624,7 @@ function mapOffhourSheets(m, sheets) {
       const c = sheet.rows[i] || [];
       const where = `ชีต ${sheet.name} แถว ${i + 1}`;
       const shift = cellText(c[1]);
-      if (!cellText(c[0]) && !shift) continue; // แถวว่างหรือแถวรวมท้ายตาราง
+      if ((!cellText(c[0]) && !shift) || cellText(c[0]) === "รวม") continue; // แถวว่างหรือแถวรวมท้ายตาราง
       const rawDate = excelDate(c[0]);
       const date = rawDate && fixYear(rawDate, hint);
       if (date && date !== rawDate) yearFixed++;
@@ -831,7 +831,8 @@ async function offhourView(m) {
       <select id="period" aria-label="ช่วงเวลา"></select>
       <input type="search" id="q" placeholder="ค้นหา เช่น ชื่อยา ผู้คัดกรอง">
       <button class="btn" data-act="import">นำเข้า Excel</button>
-      <button class="btn" data-act="csv">ส่งออก CSV</button>
+      <button class="btn" data-act="xlsx">ดาวน์โหลด Excel</button>
+      <button class="btn" data-act="pdf">ดาวน์โหลด PDF</button>
       <button class="btn primary" data-act="new">+ บันทึกใหม่</button>
     </div>
     <div id="analysis"></div>
@@ -850,6 +851,15 @@ async function offhourView(m) {
   if (!options.some(([v]) => v === period)) period = options[0][0];
   $("#period").innerHTML = options.map(([v, text]) => option(v, text, period)).join("");
   let shown = [];
+  // ชื่อช่วงเวลาที่แสดงอยู่ ใช้ในชื่อไฟล์และหัวรายงาน
+  const periodLabel = () => {
+    const q = $("#q").value.trim();
+    return `${$("#period").selectedOptions[0]?.text || "ทั้งหมด"}${q ? ` (ค้นหา "${q}")` : ""}`;
+  };
+  const needData = () => {
+    if (!shown.length) toast("ไม่มีข้อมูลในช่วงที่เลือก", true);
+    return shown.length > 0;
+  };
   const draw = () => {
     period = $("#period").value;
     try { sessionStorage.setItem("rx-offhour-period", period); } catch {}
@@ -864,8 +874,228 @@ async function offhourView(m) {
   };
   $("#period").onchange = draw;
   $("#q").oninput = draw;
-  bind({ new: () => openRecordForm(m), open: (id) => openRecord(id), csv: () => exportCsv(m, shown), import: () => importOffhour(m) });
+  bind({
+    new: () => openRecordForm(m),
+    open: (id) => openRecord(id),
+    import: () => importOffhour(m),
+    xlsx: () => needData() && downloadBlob(offhourWorkbook(offhourStats(shown), periodLabel()),
+      safeFileName(`รายงานผลการตรวจใบสั่งยานอกเวลา ${periodLabel()}.xlsx`)),
+    pdf: () => needData() && offhourDownloadPdf(offhourStats(shown), periodLabel()),
+  });
   draw();
+}
+
+// ---------- เขียนไฟล์ Excel (.xlsx) ในเบราว์เซอร์ ไม่ใช้ไลบรารี ----------
+// .xlsx คือ zip ของไฟล์ XML: เก็บแบบไม่บีบอัด (store) จึงต้องการแค่ CRC32
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (const b of bytes) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function zipFiles(files, type) {
+  const encoder = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const file of files) {
+    const name = encoder.encode(file.name);
+    const data = encoder.encode(file.data);
+    const crc = crc32(data);
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true);
+    local.setUint16(4, 20, true);
+    local.setUint16(6, 0x0800, true); // ชื่อไฟล์เป็น UTF-8
+    local.setUint16(12, 0x21, true); // วันที่ 1 ม.ค. 1980
+    local.setUint32(14, crc, true);
+    local.setUint32(18, data.length, true);
+    local.setUint32(22, data.length, true);
+    local.setUint16(26, name.length, true);
+    parts.push(local, name, data);
+    const entry = new DataView(new ArrayBuffer(46));
+    entry.setUint32(0, 0x02014b50, true);
+    entry.setUint16(4, 20, true);
+    entry.setUint16(6, 20, true);
+    entry.setUint16(8, 0x0800, true);
+    entry.setUint16(14, 0x21, true);
+    entry.setUint32(16, crc, true);
+    entry.setUint32(20, data.length, true);
+    entry.setUint32(24, data.length, true);
+    entry.setUint16(28, name.length, true);
+    entry.setUint32(42, offset, true);
+    central.push(entry, name);
+    offset += 30 + name.length + data.length;
+  }
+  const size = central.reduce((n, p) => n + p.byteLength, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, files.length, true);
+  end.setUint16(10, files.length, true);
+  end.setUint32(12, size, true);
+  end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, end], { type });
+}
+
+const xmlEsc = (v) => String(v ?? "")
+  .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+  .replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const colName = (i) => {
+  let s = "";
+  for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+  return s;
+};
+
+// sheets: [{ name, widths: [ความกว้างคอลัมน์], rows: [[ค่า]], bold: Set(เลขแถวที่ตัวหนา เริ่ม 0) }]
+function buildXlsx(sheets) {
+  const NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+  const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+  const sheetXml = (sheet) => {
+    const rows = sheet.rows.map((row, r) => `<row r="${r + 1}">${row.map((v, c) => {
+      if (v == null || v === "") return "";
+      const ref = `${colName(c)}${r + 1}`;
+      const style = sheet.bold?.has(r) ? ' s="1"' : "";
+      return typeof v === "number" && Number.isFinite(v)
+        ? `<c r="${ref}"${style}><v>${v}</v></c>`
+        : `<c r="${ref}"${style} t="inlineStr"><is><t xml:space="preserve">${xmlEsc(v)}</t></is></c>`;
+    }).join("")}</row>`).join("");
+    const cols = (sheet.widths || []).map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join("");
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="${NS}">${cols ? `<cols>${cols}</cols>` : ""}<sheetData>${rows}</sheetData></worksheet>`;
+  };
+  const files = [
+    { name: "[Content_Types].xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>` },
+    { name: "_rels/.rels", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+    { name: "xl/workbook.xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="${NS}" xmlns:r="${REL}"><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(s.name.replace(/[\[\]:*?\/\\]/g, " ").slice(0, 31))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>` },
+    { name: "xl/_rels/workbook.xml.rels", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="${REL}/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="${REL}/styles" Target="styles.xml"/></Relationships>` },
+    { name: "xl/styles.xml", data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="${NS}"><fonts count="2"><font><sz val="11"/><name val="Tahoma"/></font><font><b/><sz val="11"/><name val="Tahoma"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>` },
+    ...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXml(s) })),
+  ];
+  return zipFiles(files, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+}
+
+function downloadBlob(blob, filename) {
+  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: filename });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+const safeFileName = (s) => s.replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
+const round2 = (x) => Math.round(x * 100) / 100;
+const ratio = (a, b) => (b ? round2(a * 100 / b) : "");
+
+// ---------- ดาวน์โหลดผลตรวจใบสั่งยานอกเวลา: Excel และ PDF ----------
+
+const OFFHOUR_TITLE = "รายงานผลการตรวจใบสั่งยานอกเวลา กลุ่มงานเภสัชกรรม โรงพยาบาลตาพระยา";
+
+function offhourWorkbook(s, periodLabel) {
+  const rows = [...s.rows].sort((a, b) => a.record_date.localeCompare(b.record_date) || a.id - b.id);
+  const a = s.all;
+  // ชีตข้อมูล: คอลัมน์เดียวกับไฟล์ต้นฉบับ จึงนำกลับเข้าระบบด้วยปุ่ม "นำเข้า Excel" ได้
+  const data = {
+    name: "ข้อมูล",
+    widths: [12, 9, 11, 14, 16, 12, 24, 28, 40, 16],
+    bold: new Set([0, 1, rows.length + 2]),
+    rows: [
+      [`${OFFHOUR_TITLE} · ${periodLabel}`],
+      ["วัน เดือน ปี", "เวร", "หน่วยบริการ", "จำนวนใบสั่งยาที่คัดกรอง", "จำนวนใบสั่งยาที่มีความคลาดเคลื่อนทางยา",
+        "ร้อยละของความคลาดเคลื่อน", "DRP ที่ตรวจพบ", "ยาที่เกิด DRP", "หมายเหตุประเด็นที่ตรวจพบ/น่าสนใจ", "ผู้คัดกรอง"],
+      ...rows.map((r) => {
+        const d = r.data;
+        return [when(r.record_date, false), d.shift, d.unit || "", d.total_rx ?? "", d.error_rx ?? "",
+          ratio(Number(d.error_rx) || 0, Number(d.total_rx) || 0),
+          (d.drp_type || []).join(" / ") || "No DRP", d.drp_drugs || "", d.problems || "", d.screener || ""];
+      }),
+      ["รวม", "", "", a.screened, a.errors, ratio(a.errors, a.screened)],
+    ],
+  };
+  const out = [];
+  const bold = new Set();
+  const head = (cells) => { bold.add(out.length); out.push(cells); };
+  const gap = () => out.push([]);
+  const rateRow = ([k, v]) => [k, v.shifts, v.screened, v.errors, ratio(v.errors, v.screened), v.drp];
+  const drpTotal = s.drp.reduce((n, [, c]) => n + c, 0);
+  const cross = [...s.byShift, ...s.byUnit].map(([k]) => k);
+  head([OFFHOUR_TITLE]);
+  out.push([`ช่วงเวลา: ${periodLabel}`], [`ดาวน์โหลดเมื่อ ${when(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16))} โดย ${me.full_name}`]);
+  gap();
+  head(["สรุป", "ค่า"]);
+  out.push(["จำนวนเวรที่บันทึก", a.shifts], ["ใบสั่งยาที่คัดกรอง (ใบ)", a.screened], ["ใบสั่งยาที่มีความคลาดเคลื่อนทางยา (ใบ)", a.errors],
+    ["ร้อยละของความคลาดเคลื่อน", ratio(a.errors, a.screened)], ["เวรที่พบ DRP", a.drp]);
+  gap();
+  head(["รายเดือน", "เวร", "คัดกรอง (ใบ)", "คลาดเคลื่อน (ใบ)", "ร้อยละ", "เวรที่พบ DRP"]);
+  s.byMonth.forEach(([k, v]) => out.push(rateRow([monthLabel(k), v])));
+  gap();
+  head(["เวร / หน่วยบริการ", "เวร", "คัดกรอง (ใบ)", "คลาดเคลื่อน (ใบ)", "ร้อยละ", "เวรที่พบ DRP"]);
+  [...s.byShift, ...s.byUnit].forEach((e) => out.push(rateRow(e)));
+  gap();
+  head(["ประเภท DRP", "จำนวนครั้ง", "ร้อยละของ DRP ทั้งหมด", ...cross]);
+  s.drp.forEach(([type, c]) => out.push([type, c, ratio(c, drpTotal), ...cross.map((k) =>
+    s.rows.filter((r) => (r.data.drp_type || []).includes(type) && (r.data.shift === k || r.data.unit === k)).length)]));
+  if (!s.drp.length) out.push(["ไม่พบ DRP"]);
+  gap();
+  head(["ยาที่เกิด DRP", "จำนวนครั้ง"]);
+  s.drugs.forEach(([k, c]) => out.push([titleCase(k), c]));
+  if (!s.drugs.length) out.push(["ไม่มีข้อมูลยา"]);
+  gap();
+  head(["ผู้คัดกรอง", "เวร", "คัดกรอง (ใบ)", "คลาดเคลื่อน (ใบ)", "ร้อยละ", "เวรที่พบ DRP"]);
+  s.byScreener.forEach((e) => out.push(rateRow(e)));
+  return buildXlsx([data, { name: "สรุป", widths: [36, 12, 18, 18, 12, 14, 12, 12], bold, rows: out }]);
+}
+
+function printOffhour(s, periodLabel, withDetail) {
+  const rows = [...s.rows].sort((a, b) => a.record_date.localeCompare(b.record_date) || a.id - b.id);
+  const detail = withDetail ? `<h2 class="report-section">รายการบันทึก (${num(rows.length)} เวร)</h2>
+    <table class="report-detail"><thead><tr><th>วันที่</th><th>เวร</th><th>หน่วย</th><th class="num">คัดกรอง</th>
+      <th class="num">คลาดเคลื่อน</th><th>DRP</th><th>ยาที่เกิด DRP</th><th>หมายเหตุ</th><th>ผู้คัดกรอง</th></tr></thead>
+    <tbody>${rows.map((r) => {
+      const d = r.data;
+      return `<tr><td>${when(r.record_date, false)}</td><td>${esc(d.shift)}</td><td>${esc(d.unit || "")}</td>
+        <td class="num">${num(d.total_rx)}</td><td class="num">${num(d.error_rx)}</td>
+        <td>${esc((d.drp_type || []).join(", ") || "No DRP")}</td><td class="pre">${esc(d.drp_drugs || "")}</td>
+        <td class="pre">${esc(d.problems || "")}</td><td>${esc(d.screener || "")}</td></tr>`;
+    }).join("")}</tbody></table>` : "";
+  $("#print").innerHTML = `<div class="report">
+    <div class="report-head">
+      <img src="logo.png" alt="">
+      <div>
+        <h1>รายงานผลการตรวจใบสั่งยานอกเวลา</h1>
+        <p>กลุ่มงานเภสัชกรรม โรงพยาบาลตาพระยา</p>
+        <p>ช่วงเวลา: <b>${esc(periodLabel)}</b> · พิมพ์เมื่อ ${longDate()} โดย ${esc(me.full_name)}</p>
+      </div>
+    </div>
+    ${offhourAnalysis(s)}
+    ${detail}
+  </div>`;
+  // ชื่อไฟล์ PDF ที่เบราว์เซอร์เสนอมาจากชื่อหน้าเว็บ
+  const title = document.title;
+  document.title = safeFileName(`รายงานผลการตรวจใบสั่งยานอกเวลา ${periodLabel}`);
+  window.addEventListener("afterprint", () => { document.title = title; }, { once: true });
+  window.print();
+}
+
+function offhourDownloadPdf(s, periodLabel) {
+  openForm({
+    title: "ดาวน์โหลด PDF",
+    intro: `<p class="hint">ในหน้าต่างที่เปิดขึ้น ให้เลือกปลายทาง (Destination) เป็น <b>บันทึกเป็น PDF</b> หรือ <b>Save as PDF</b> แล้วกดบันทึก</p>`,
+    fields: [{
+      name: "detail", label: "เนื้อหา", type: "select", noBlank: true,
+      options: [["0", "สรุปและกราฟ"], ["1", `สรุป กราฟ และรายการบันทึกทั้งหมด (${num(s.rows.length)} เวร)`]],
+    }],
+    submitLabel: "สร้าง PDF",
+    onSubmit: async (d) => { setTimeout(() => printOffhour(s, periodLabel, d.detail === "1"), 100); },
+  });
 }
 
 // สรุปย่อในหน้า Dashboard
@@ -875,7 +1105,7 @@ async function offhourPanel(month) {
   const rows = await api("GET", `/records?module=offhour_rx&month=${month}`);
   if (!rows.length || !box.isConnected) return;
   const s = offhourStats(rows);
-  box.innerHTML = `<div class="panel-head"><h2>ผลตรวจใบสั่งยานอกเวลา <small>${monthLabel(month)}</small></h2>
+  box.innerHTML = `<div class="panel-head"><h2>${esc(MOD.offhour_rx.title)} <small>${monthLabel(month)}</small></h2>
       ${btn("go", "ดูการวิเคราะห์ทั้งหมด", "offhour_rx")}</div>
     <section class="kpis">
       ${kpi("ใบสั่งยาที่คัดกรอง", num(s.all.screened), "ใบ")}

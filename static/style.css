@@ -428,6 +428,23 @@ body.auth #tabs, body.auth #userbox { display: none; }
   #print th { width: 35%; text-align: left; vertical-align: top; }
   #print .pre { white-space: pre-line; }
   #print .signs.one { grid-template-columns: 1fr; width: 50%; margin-left: auto; }
+  /* รายงาน PDF: พิมพ์บนกระดาษขาวเสมอ แท่งกราฟพิมพ์สีด้วย */
+  #print .report { color: #000; }
+  #print .report-head { display: flex; align-items: center; gap: 1rem; border-bottom: 2px solid #000; padding-bottom: .6rem; margin-bottom: 1rem; }
+  #print .report-head img { height: 54px; width: auto; }
+  #print .report-head h1 { text-align: left; font-size: 1.3rem; }
+  #print .report-head p { margin: .15rem 0 0; }
+  #print .card, #print .kpi { background: #fff; border: 1px solid #999; color: #000; break-inside: avoid; }
+  #print .card { padding: .6rem .8rem; margin-bottom: .8rem; }
+  #print .kpis { grid-template-columns: repeat(4, 1fr); gap: .5rem; }
+  #print .kpi small, #print .kpi span, #print .bar-value small, #print .col-label, #print h2 small { color: #333; }
+  #print .grid2 { display: block; }
+  #print .bar-fill, #print .col-bar { background: #0f766e; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #print .cols-wrap { overflow: visible; }
+  #print .report-section { margin-top: 1rem; break-before: page; }
+  #print .report-detail { font-size: 11px; }
+  #print .report-detail th, #print .report-detail td { padding: .2rem .3rem; vertical-align: top; }
+  #print .pre { white-space: pre-line; }
   #print .signs { display: grid; grid-template-columns: 1fr 1fr; gap: 2.2rem 2rem; margin-top: 2.5rem; break-inside: avoid; }
   #print .sign { text-align: center; line-height: 1.9; }
 }

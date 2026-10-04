@@ -24,7 +24,7 @@
  {
   "key": "med_error",
   "group": "ความปลอดภัยด้านยา",
-  "title": "Med error / DRP",
+  "title": "ผลการรายงานความเสี่ยง (Risk Management)",
   "patient": true,
   "patient_optional": true,
   "date_label": "วันที่เกิดเหตุ",
@@ -45,7 +45,7 @@
  {
   "key": "offhour_rx",
   "group": "ความปลอดภัยด้านยา",
-  "title": "ตรวจใบสั่งยานอกเวลาราชการ",
+  "title": "รายงานผลการตรวจใบสั่งยานอกเวลา",
   "view": "offhour",
   "import": "offhour_excel",
   "date_label": "วัน เดือน ปี",
