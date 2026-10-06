@@ -378,7 +378,11 @@ def clean_field(field, value):
 
 
 def record_values(module, body):
-    record_date = to_date(body.get("record_date"), module.get("date_label", "วันที่"), True)
+    # งานที่ไม่มีวันที่ (เช่น บัญชียา) ใช้วันที่บันทึกแทน
+    if module.get("no_date"):
+        record_date = date.today().isoformat()
+    else:
+        record_date = to_date(body.get("record_date"), module.get("date_label", "วันที่"), True)
     hn = patient_name = None
     if module.get("patient"):
         need = not module.get("patient_optional")
@@ -475,12 +479,28 @@ def import_records(req):
         except ApiError as err:
             raise ApiError(400, f"แถวที่ {row.get('_row', i)}: {err.message}")
     ts = now()
+    replaced = 0
+    if req.body.get("replace") is not None:
+        # แทนที่ชุดเดิม เช่น บัญชียาทั้งปีงบ: ลบแบบซ่อนรายการเดิมที่มีค่า replace_by เท่ากันก่อนนำเข้า
+        field = module.get("replace_by")
+        if not field:
+            raise ApiError(400, "งานนี้แทนที่ข้อมูลเดิมไม่ได้")
+        if req.user["role"] != "admin":
+            raise ApiError(403, "การแทนที่ข้อมูลเดิมทำได้เฉพาะผู้ดูแลระบบ")
+        value = to_num(req.body.get("replace"), "ค่าที่จะแทนที่", True)
+        old_ids = [r[0] for r in req.conn.execute(
+            "SELECT id FROM records WHERE module = ? AND deleted_at IS NULL AND json_extract(data, ?) = ?",
+            (module["key"], f"$.{field}", value))]
+        for record_id in old_ids:
+            req.conn.execute("UPDATE records SET deleted_at = ? WHERE id = ?", (ts, record_id))
+            log_record(req, record_id, "delete")
+        replaced = len(old_ids)
     for record_date, hn, patient_name, data in values:
         record_id = req.conn.execute(
             "INSERT INTO records (module, record_date, hn, patient_name, data, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (module["key"], record_date, hn, patient_name, json.dumps(data, ensure_ascii=False), req.user["id"], ts)).lastrowid
         log_record(req, record_id, "import")
-    return {"inserted": len(values)}
+    return {"inserted": len(values), "replaced": replaced}
 
 
 def can_edit(req, rec):
@@ -536,7 +556,12 @@ def summary(req):
     duty_today = [record_dict(r) for r in conn.execute(
         RECORD_SELECT + " WHERE r.module = 'duty' AND r.deleted_at IS NULL AND r.record_date = ? ORDER BY r.id",
         (today.isoformat(),))]
-    return {"month": month, "today": today.isoformat(), "counts": counts,
+    # งานที่ไม่มีวันที่ (เช่น บัญชียา) นับทั้งหมดแทนการนับรายเดือน
+    no_date = [m["key"] for m in MODULES if m.get("no_date")]
+    totals = {r[0]: r[1] for r in conn.execute(
+        f"SELECT module, COUNT(*) FROM records WHERE deleted_at IS NULL AND module IN ({','.join('?' * len(no_date))}) GROUP BY module",
+        no_date)} if no_date else {}
+    return {"month": month, "today": today.isoformat(), "counts": counts, "totals": totals,
             "appointments": appointments, "duty_today": duty_today}
 
 

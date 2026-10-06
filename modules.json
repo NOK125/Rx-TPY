@@ -163,6 +163,25 @@
   "stats": ["insulin", "hypo", "adherence"]
  },
  {
+  "key": "formulary",
+  "group": "งานบริหาร",
+  "title": "บัญชียาโรงพยาบาล",
+  "view": "formulary",
+  "no_date": true,
+  "replace_by": "fiscal_year",
+  "fields": [
+   {"name": "fiscal_year", "label": "ปีงบประมาณ", "type": "number", "required": true, "min": 2560, "max": 2700},
+   {"name": "seq", "label": "ลำดับที่", "type": "number", "min": 0},
+   {"name": "drug", "label": "รายการยา", "type": "text", "required": true},
+   {"name": "category", "label": "ประเภท", "type": "select", "options": ["b", "s", "NED", "ex"]},
+   {"name": "estimate", "label": "ประมาณการจัดซื้อ", "type": "number", "min": 0, "unit": "บาท"},
+   {"name": "method", "label": "วิธีการจัดซื้อ", "type": "select", "options": ["เฉพาะเจาะจง", "สัญญาราคาคงที่", "GPO VMI", "e-bidding"]}
+  ],
+  "list": ["seq", "drug", "category", "estimate", "method"],
+  "stats": ["category", "method"],
+  "sums": ["estimate"]
+ },
+ {
   "key": "stock_check",
   "group": "งานบริหาร",
   "title": "ตรวจสอบ STOCK หน่วยบริการ",

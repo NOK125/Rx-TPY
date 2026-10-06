@@ -323,7 +323,8 @@ function cleanField(field, value) {
 }
 
 function recordValues(module, body) {
-  const recordDate = toDate(body.record_date, module.date_label || "วันที่", true);
+  // งานที่ไม่มีวันที่ (เช่น บัญชียา) ใช้วันที่บันทึกแทน
+  const recordDate = module.no_date ? today() : toDate(body.record_date, module.date_label || "วันที่", true);
   let hn = null;
   let patientName = null;
   if (module.patient) {
@@ -433,7 +434,24 @@ async function importRecords(req) {
     }
   });
   const ts = now();
-  await req.db.batch([
+  const statements = [];
+  if (req.body.replace != null) {
+    // แทนที่ชุดเดิม เช่น บัญชียาทั้งปีงบ: ลบแบบซ่อนรายการเดิมที่มีค่า replace_by เท่ากันก่อนนำเข้า
+    const field = module.replace_by;
+    if (!field) throw new ApiError(400, "งานนี้แทนที่ข้อมูลเดิมไม่ได้");
+    if (req.user.role !== "admin") throw new ApiError(403, "การแทนที่ข้อมูลเดิมทำได้เฉพาะผู้ดูแลระบบ");
+    const value = toNum(req.body.replace, "ค่าที่จะแทนที่", true);
+    statements.push(
+      req.db.prepare("UPDATE records SET deleted_at = ? WHERE module = ? AND deleted_at IS NULL AND json_extract(data, ?) = ?")
+        .bind(ts, module.key, `$.${field}`, value),
+      req.db.prepare(`INSERT INTO record_log (record_id, action, snapshot, user_id, ts)
+        SELECT id, 'delete', ${SNAPSHOT_SQL}, ?, ? FROM records
+        WHERE module = ? AND deleted_at = ? AND json_extract(data, ?) = ? ORDER BY id`)
+        .bind(req.user.id, ts, module.key, ts, `$.${field}`, value),
+    );
+  }
+  const results = await req.db.batch([
+    ...statements,
     req.db.prepare(`INSERT INTO records (module, record_date, hn, patient_name, data, created_by, created_at)
       SELECT ?, json_extract(value, '$.record_date'), json_extract(value, '$.hn'), json_extract(value, '$.patient_name'),
              json_extract(value, '$.data'), ?, ?
@@ -443,7 +461,7 @@ async function importRecords(req) {
       SELECT id, 'import', ${SNAPSHOT_SQL}, ?, ? FROM records
       WHERE id > (SELECT MAX(id) FROM records) - ? ORDER BY id`).bind(req.user.id, ts, values.length),
   ]);
-  return { inserted: values.length };
+  return { inserted: values.length, replaced: statements.length ? results[0].meta.changes : 0 };
 }
 
 function canEdit(req, rec) {
@@ -490,7 +508,9 @@ async function summary(req) {
   const day = today();
   const month = /^\d{4}-\d{2}$/.test(req.q("month")) ? req.q("month") : day.slice(0, 7);
   const db = req.db;
-  const [counts, appointments, duty] = await db.batch([
+  // งานที่ไม่มีวันที่ (เช่น บัญชียา) นับทั้งหมดแทนการนับรายเดือน
+  const noDate = MODULES.filter((m) => m.no_date).map((m) => m.key);
+  const [counts, appointments, duty, totals] = await db.batch([
     db.prepare("SELECT module, COUNT(*) AS n FROM records WHERE deleted_at IS NULL AND record_date LIKE ? GROUP BY module")
       .bind(month + "-%"),
     // นัดหมายจากบันทึกล่าสุดของผู้ป่วยแต่ละคนในแต่ละคลินิก: ขาดนัดไม่เกิน 30 วัน และนัดใน 14 วันข้างหน้า
@@ -499,11 +519,14 @@ async function summary(req) {
         AND json_extract(r.data, '$.next_visit') BETWEEN ? AND ?
         ORDER BY json_extract(r.data, '$.next_visit'), r.patient_name`).bind(addDays(day, -30), addDays(day, 14)),
     db.prepare(RECORD_SELECT + " WHERE r.module = 'duty' AND r.deleted_at IS NULL AND r.record_date = ? ORDER BY r.id").bind(day),
+    db.prepare(`SELECT module, COUNT(*) AS n FROM records WHERE deleted_at IS NULL
+      AND module IN (SELECT value FROM json_each(?)) GROUP BY module`).bind(JSON.stringify(noDate)),
   ]);
   return {
     month,
     today: day,
     counts: Object.fromEntries(counts.results.map((r) => [r.module, r.n])),
+    totals: Object.fromEntries(totals.results.map((r) => [r.module, r.n])),
     appointments: appointments.results.map(recordDict),
     duty_today: duty.results.map(recordDict),
   };

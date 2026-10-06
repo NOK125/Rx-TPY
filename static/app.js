@@ -176,7 +176,7 @@ async function loadMeta() {
 // ช่องทั้งหมดของงาน รวมวันที่ HN และชื่อผู้ป่วย
 function allFields(m) {
   return [
-    { name: "record_date", label: m.date_label || "วันที่", type: "date", required: true },
+    ...(m.no_date ? [] : [{ name: "record_date", label: m.date_label || "วันที่", type: "date", required: true }]),
     ...(m.patient ? [
       { name: "hn", label: "HN", required: !m.patient_optional, autocomplete: "off" },
       { name: "patient_name", label: "ชื่อ-นามสกุลผู้ป่วย", required: !m.patient_optional },
@@ -395,10 +395,10 @@ function statsHtml(m, list) {
 function recordsTable(m, list, emptyText) {
   const listFields = m.list.map((n) => fieldOf(m, n));
   return table(
-    [m.date_label || "วันที่", ...(m.patient ? ["HN", "ชื่อผู้ป่วย"] : []),
+    [...(m.no_date ? [] : [m.date_label || "วันที่"]), ...(m.patient ? ["HN", "ชื่อผู้ป่วย"] : []),
       ...listFields.map((f) => (f.type === "number" ? [f.label, "num"] : f.label)), "ผู้บันทึก", ""],
     list.map((r) => [
-      when(r.record_date, false),
+      ...(m.no_date ? [] : [when(r.record_date, false)]),
       ...(m.patient ? [esc(r.hn || "-"), esc(r.patient_name || "-")] : []),
       ...listFields.map((f) => (f.type === "number" ? [showValue(f, r.data[f.name]), "num"] : showValue(f, r.data[f.name]))),
       esc(r.created_by_name),
@@ -410,6 +410,7 @@ function recordsTable(m, list, emptyText) {
 async function moduleView(m) {
   if (m.view === "calendar") return calendarView(m);
   if (m.view === "offhour") return offhourView(m);
+  if (m.view === "formulary") return formularyView(m);
   view.innerHTML = `<div class="toolbar">
       <h2>${esc(m.title)}</h2>
       ${monthInput()}
@@ -1119,6 +1120,225 @@ async function offhourPanel(month) {
   box.hidden = false;
 }
 
+// ---------- บัญชียาโรงพยาบาล ----------
+// แยกตามปีงบประมาณ (ช่อง fiscal_year) นำเข้าจากไฟล์แผนจัดซื้อยา โดยหาคอลัมน์จากชื่อหัวตาราง
+
+const drugKey = (fy, name) => `${fy}|${String(name ?? "").toLowerCase().replace(/\s+/g, " ").trim()}`;
+const baht = (v) => Number(v || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// หาแถวหัวตารางที่มี "ลำดับ" "รายการ" และ "วิธีการจัดซื้อ" แล้วจับคู่คอลัมน์ตามชื่อ
+function findFormularySheets(sheets) {
+  const found = [];
+  for (const sheet of sheets) {
+    for (let h = 0; h < Math.min(sheet.rows.length, 15); h++) {
+      const head = (sheet.rows[h] || []).map((c) => cellText(c).replace(/\s+/g, " "));
+      const at = (test) => head.findIndex((c) => c && test(c));
+      const cols = {
+        seq: at((c) => c.startsWith("ลำดับ")),
+        drug: at((c) => c.startsWith("รายการ")),
+        category: at((c) => c.startsWith("ประเภท")),
+        estimate: at((c) => c.startsWith("ประมาณการจัดซื้อ")),
+        method: at((c) => c.includes("วิธีการจัดซื้อ")),
+      };
+      if (cols.drug < 0 || cols.method < 0) continue;
+      const fy = Number(head[cols.estimate]?.match(/25\d\d/)?.[0]) || null;
+      found.push({ sheet, head: h, cols, fy });
+      break;
+    }
+  }
+  return found;
+}
+
+function mapFormularyRows(m, target, fy) {
+  const catOptions = fieldOf(m, "category").options;
+  const methodOptions = fieldOf(m, "method").options;
+  const match = (options, v) => options.find((o) => o.toLowerCase() === v.toLowerCase());
+  const { sheet, head, cols } = target;
+  const rows = [];
+  const skipped = [];
+  for (let i = head + 1; i < sheet.rows.length; i++) {
+    const c = sheet.rows[i] || [];
+    const drug = cellText(c[cols.drug]);
+    if (!drug || /^รวม/.test(drug)) continue; // แถวว่างหรือแถวรวมท้ายตาราง
+    const where = `ชีต ${sheet.name} แถว ${i + 1}`;
+    const catText = cols.category >= 0 ? cellText(c[cols.category]) : "";
+    const methodText = cellText(c[cols.method]);
+    const category = catText ? match(catOptions, catText) : "";
+    const method = methodText ? match(methodOptions, methodText) : "";
+    if (category === undefined) { skipped.push(`${where}: ประเภท "${catText}" ไม่อยู่ในรายการ (${catOptions.join(", ")})`); continue; }
+    if (method === undefined) { skipped.push(`${where}: วิธีการจัดซื้อ "${methodText}" ไม่อยู่ในรายการ`); continue; }
+    const estimate = cols.estimate >= 0 ? cellNum(c[cols.estimate]) : null;
+    rows.push({
+      _row: `${i + 1} ชีต ${sheet.name}`, fiscal_year: fy,
+      seq: cols.seq >= 0 ? cellNum(c[cols.seq]) : null, drug,
+      category, estimate: estimate == null ? null : Math.round(estimate * 100) / 100, method,
+    });
+  }
+  return { rows, skipped };
+}
+
+async function importFormulary(m, currentFy, onDone) {
+  const file = await pickFile(".xlsx,.csv");
+  if (!file) return;
+  let targets;
+  let existing;
+  try {
+    [targets, existing] = await Promise.all([readSpreadsheet(file).then(findFormularySheets), api("GET", `/records?module=${m.key}`)]);
+  } catch (err) {
+    return toast(err.message, true);
+  }
+  if (!targets.length) return toast('ไม่พบหัวตารางที่มีคอลัมน์ "รายการ" และ "วิธีการจัดซื้อ" ในไฟล์นี้', true);
+  const admin = me.role === "admin";
+  dlg.className = "wide";
+  dlg.innerHTML = dialogShell("นำเข้าบัญชียาจาก Excel", `
+    <p class="hint">${esc(file.name)}</p>
+    <div class="fields two">
+      ${fieldHtml({ name: "sheet", label: "ชีต", type: "select", noBlank: true, options: targets.map((t, i) => [i, t.sheet.name]) })}
+      ${fieldHtml({ name: "fy", label: "ปีงบประมาณ", type: "number", required: true, min: 2560, max: 2700, value: targets[0].fy || currentFy })}
+      ${fieldHtml({ name: "mode", label: "วิธีนำเข้า", type: "select", noBlank: true, options: [
+        ["add", "เพิ่มเฉพาะรายการที่ยังไม่มีในปีงบนี้"],
+        ...(admin ? [["replace", "แทนที่บัญชียาทั้งปีงบนี้ (ลบรายการเดิมของปีงบนี้ก่อน)"]] : []),
+      ] })}
+    </div>
+    <div id="import-preview"></div>`, "นำเข้า");
+  const form = $("form", dlg);
+  let plan = null;
+  const preview = () => {
+    const target = targets[Number(form.sheet.value)];
+    const fy = Number(form.fy.value);
+    const mode = form.mode.value;
+    const parsed = mapFormularyRows(m, target, fy);
+    const have = new Set(existing.filter((r) => Number(r.data.fiscal_year) === fy).map((r) => drugKey(fy, r.data.drug)));
+    const fresh = mode === "replace" ? parsed.rows : parsed.rows.filter((r) => !have.has(drugKey(fy, r.drug)));
+    plan = { fy, mode, rows: fresh };
+    const total = fresh.reduce((s, r) => s + (r.estimate || 0), 0);
+    const info = (label, value) => `<div><small>${label}</small><div>${value}</div></div>`;
+    $("#import-preview").innerHTML = `
+      <div class="info-grid">
+        ${info("จะนำเข้า", `<b>${num(fresh.length)}</b> รายการ`)}
+        ${info("มูลค่าประมาณการรวม", `${baht(total)} บาท`)}
+        ${mode === "replace" ? info("รายการเดิมของปีงบนี้ (จะถูกแทนที่)", `${num(have.size)} รายการ`)
+          : info("มีในปีงบนี้แล้ว (ข้าม)", `${num(parsed.rows.length - fresh.length)} รายการ`)}
+        ${info("ข้อมูลไม่ครบ (ข้าม)", `${num(parsed.skipped.length)} แถว`)}
+      </div>
+      ${parsed.skipped.length ? `<details><summary>ดูแถวที่ข้าม</summary><ul class="history">${parsed.skipped.slice(0, 50)
+        .map((s) => `<li>${esc(s)}</li>`).join("")}</ul></details>` : ""}
+      ${mode === "replace" && have.size ? `<p class="form-error">รายการเดิมของปีงบ ${fy} จำนวน ${num(have.size)} รายการจะถูกลบ (ยังดูย้อนหลังได้ในประวัติ) แล้วแทนที่ด้วยรายการจากไฟล์นี้</p>` : ""}`;
+    $("button[type=submit]", form).textContent = fresh.length ? `นำเข้า ${num(fresh.length)} รายการ` : "ไม่มีรายการใหม่";
+    $("button[type=submit]", form).disabled = !fresh.length;
+  };
+  form.onchange = preview;
+  form.fy.oninput = preview;
+  preview();
+  wireDialog(async (_, f) => {
+    if (!plan.rows.length) throw new Error("ไม่มีรายการที่จะนำเข้า");
+    const submit = $("button[type=submit]", f);
+    let done = 0;
+    let replaced = 0;
+    try {
+      for (let i = 0; i < plan.rows.length; i += 500) {
+        submit.textContent = `กำลังนำเข้า ${num(done)} / ${num(plan.rows.length)}`;
+        const res = await api("POST", "/records/import", {
+          module: m.key, rows: plan.rows.slice(i, i + 500),
+          ...(plan.mode === "replace" && i === 0 ? { replace: plan.fy } : {}),
+        });
+        done += res.inserted;
+        replaced += res.replaced || 0;
+      }
+    } catch (err) {
+      if (done) onDone(plan.fy);
+      throw new Error(done ? `นำเข้าแล้ว ${num(done)} รายการ แล้วเกิดข้อผิดพลาด: ${err.message}` : err.message);
+    }
+    toast(`นำเข้าแล้ว ${num(done)} รายการ${replaced ? ` (แทนที่รายการเดิม ${num(replaced)} รายการ)` : ""}`);
+    onDone(plan.fy);
+  });
+}
+
+function formularyWorkbook(rows, fy) {
+  const total = rows.reduce((s, r) => s + (Number(r.data.estimate) || 0), 0);
+  return buildXlsx([{
+    name: `บัญชียา ปีงบ ${fy}`,
+    widths: [9, 48, 10, 22, 18],
+    bold: new Set([0, 1, rows.length + 2]),
+    rows: [
+      [`บัญชียาโรงพยาบาลตาพระยา ปีงบประมาณ ${fy}`],
+      ["ลำดับที่", "รายการยา", "ประเภท", `ประมาณการจัดซื้อปีงบ ${fy} (บาท)`, "วิธีการจัดซื้อ"],
+      ...rows.map((r) => [r.data.seq ?? "", r.data.drug, r.data.category || "", r.data.estimate ?? "", r.data.method || ""]),
+      ["", `รวม ${rows.length} รายการ`, "", Math.round(total * 100) / 100, ""],
+    ],
+  }]);
+}
+
+let formularyFy = null;
+
+async function formularyView(m) {
+  view.innerHTML = `<div class="toolbar">
+      <h2>${esc(m.title)}</h2>
+      <select id="fy" aria-label="ปีงบประมาณ"></select>
+      <input type="search" id="q" placeholder="ค้นหาชื่อยา ประเภท หรือวิธีจัดซื้อ">
+      <button class="btn" data-act="import">นำเข้า Excel</button>
+      <button class="btn" data-act="xlsx">ดาวน์โหลด Excel</button>
+      <button class="btn primary" data-act="new">+ เพิ่มรายการ</button>
+    </div>
+    <div id="formulary-summary"></div>
+    <div class="list" id="list"></div>`;
+  const all = await api("GET", `/records?module=${m.key}`);
+  const thisFy = fiscalYear(isoDate());
+  const years = [...new Set([...all.map((r) => Number(r.data.fiscal_year)), thisFy])].sort((a, b) => b - a);
+  if (!years.includes(formularyFy)) formularyFy = all.some((r) => Number(r.data.fiscal_year) === thisFy) ? thisFy : years[0];
+  $("#fy").innerHTML = years.map((y) => option(y, `ปีงบประมาณ ${y}`, formularyFy)).join("");
+  let shown = [];
+  const draw = () => {
+    formularyFy = Number($("#fy").value);
+    const fy = formularyFy;
+    const q = $("#q").value.trim().toLowerCase();
+    const rows = all.filter((r) => Number(r.data.fiscal_year) === fy)
+      .sort((a, b) => (a.data.seq ?? 1e9) - (b.data.seq ?? 1e9) || String(a.data.drug).localeCompare(String(b.data.drug)));
+    shown = q ? rows.filter((r) => recordText(r).includes(q)) : rows;
+    const total = shown.reduce((s, r) => s + (Number(r.data.estimate) || 0), 0);
+    const groupSum = (field) => {
+      const map = new Map();
+      for (const r of shown) {
+        const k = r.data[field] || "ไม่ระบุ";
+        const e = map.get(k) || { n: 0, sum: 0 };
+        e.n++;
+        e.sum += Number(r.data.estimate) || 0;
+        map.set(k, e);
+      }
+      return [...map].sort((a, b) => b[1].sum - a[1].sum).map(([k, e]) => ({
+        label: k, value: e.sum, text: `${baht(e.sum)} บาท`, sub: `${num(e.n)} รายการ · ${total ? (e.sum * 100 / total).toFixed(1) : 0}%`,
+      }));
+    };
+    $("#formulary-summary").innerHTML = rows.length ? `
+      <section class="kpis">
+        ${kpi("จำนวนรายการยา", num(shown.length), "รายการ")}
+        ${kpi(`ประมาณการจัดซื้อปีงบ ${fy}`, baht(total), "บาท")}
+      </section>
+      <div class="grid2 analysis">
+        <section class="card"><h2>มูลค่าตามวิธีการจัดซื้อ</h2>${barList(groupSum("method"))}</section>
+        <section class="card"><h2>มูลค่าตามประเภท</h2>${barList(groupSum("category"))}</section>
+      </div>` : `<p class="hint">ยังไม่มีบัญชียาปีงบประมาณ ${fy} กด "นำเข้า Excel" เพื่อนำเข้าไฟล์แผนจัดซื้อยา หรือกด "+ เพิ่มรายการ"</p>`;
+    $("#list").innerHTML = table(
+      [["ลำดับที่", "num"], "รายการยา", "ประเภท", [`ประมาณการจัดซื้อปีงบ ${fy} (บาท)`, "num"], "วิธีการจัดซื้อ", ""],
+      [
+        ...shown.map((r) => [[num(r.data.seq), "num"], esc(r.data.drug), esc(r.data.category || "-"),
+          [r.data.estimate == null ? "-" : baht(r.data.estimate), "num"], esc(r.data.method || "-"), actions(btn("open", "ดู", r.id))]),
+        ...(shown.length ? [["", `<b>รวม ${num(shown.length)} รายการ</b>`, "", [`<b>${baht(total)}</b>`, "num"], "", ""]] : []),
+      ],
+      q ? "ไม่พบรายการที่ค้นหา" : "ยังไม่มีรายการ");
+  };
+  $("#fy").onchange = draw;
+  $("#q").oninput = draw;
+  bind({
+    new: () => openRecordForm(m, null, { fiscal_year: formularyFy }),
+    open: (id) => openRecord(id),
+    import: () => importFormulary(m, formularyFy, (fy) => { formularyFy = fy; refresh(); }),
+    xlsx: () => (shown.length ? downloadBlob(formularyWorkbook(shown, formularyFy), `บัญชียาโรงพยาบาล ปีงบ ${formularyFy}.xlsx`)
+      : toast("ไม่มีข้อมูลในปีงบที่เลือก", true)),
+  });
+  draw();
+}
+
 // ตารางเวร: แสดงเป็นปฏิทินรายเดือน (มือถือแสดงเป็นรายการวัน)
 async function calendarView(m) {
   if (!currentMonth) currentMonth = isoDate().slice(0, 7);
@@ -1340,7 +1560,8 @@ async function dashboardView() {
     ${groups.map(([g, mods], gi) => `<h3 class="group-title g${gi}"><i></i>${esc(g)}</h3>
       <section class="mod-grid">${mods.map((m) => `<button type="button" class="mod-card g${gi}" data-act="go" data-id="${m.key}">
         <span class="mod-icon">${icon(m.key)}</span>
-        <span><b>${num(s.counts[m.key] || 0)}</b><span>${esc(m.title)}</span></span></button>`).join("")}</section>`).join("")}
+        <span><b>${num((m.no_date ? s.totals?.[m.key] : s.counts[m.key]) || 0)}</b><span>${esc(m.title)}${
+          m.no_date ? " <small>(รายการ)</small>" : ""}</span></span></button>`).join("")}</section>`).join("")}
     <section class="card offhour-panel" id="offhour-panel" hidden></section>
     <div class="grid2">
       <section class="card"><h2>เวรวันนี้ <small>${when(s.today, false)}</small></h2>
