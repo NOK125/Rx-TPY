@@ -194,6 +194,7 @@
    {"name": "seq", "label": "ลำดับ", "type": "number", "min": 0, "aliases": ["ลำดับที่"]},
    {"name": "full_name", "label": "ชื่อ-นามสกุล", "type": "text", "required": true, "placeholder": "เช่น ภญ.สมใจ ใจดี", "aliases": ["ชื่อ", "ชื่อ-สกุล", "ชื่อสกุล"]},
    {"name": "position", "label": "ตำแหน่ง", "type": "text", "placeholder": "เช่น เภสัชกรชำนาญการ"},
+   {"name": "start_year", "label": "ปี พ.ศ. ที่เริ่มปฏิบัติงานที่ รพ.", "type": "number", "min": 2480, "max": 2700, "be_year": true, "placeholder": "เช่น 2560", "aliases": ["ปีที่เริ่มปฏิบัติงาน", "ปีที่เข้าปฏิบัติงาน", "ปีที่เริ่มงาน", "ปีที่เข้าทำงาน", "ปีที่บรรจุ", "เริ่มปฏิบัติงาน", "วันที่เริ่มปฏิบัติงาน", "วันที่บรรจุ"]},
    {"name": "license", "label": "เลขที่ใบประกอบวิชาชีพ", "type": "text", "aliases": ["ใบประกอบวิชาชีพ", "เลขใบประกอบ"]},
    {"name": "duty", "label": "งานที่รับผิดชอบ", "type": "textarea", "aliases": ["หน้าที่", "หน้าที่รับผิดชอบ"]},
    {"name": "phone", "label": "เบอร์โทรศัพท์", "type": "text", "aliases": ["เบอร์โทร", "โทรศัพท์", "โทร"]},
@@ -201,7 +202,7 @@
    {"name": "status", "label": "สถานะ", "type": "select", "options": ["ปฏิบัติงาน", "ลาศึกษาต่อ", "ลาคลอด", "ย้าย / ลาออก", "อื่น ๆ"]},
    {"name": "note", "label": "หมายเหตุ", "type": "textarea"}
   ],
-  "list": ["position", "license", "phone"],
+  "list": ["position", "start_year", "license", "phone"],
   "stats": ["position", "status"]
  },
  {

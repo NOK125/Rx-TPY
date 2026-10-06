@@ -192,7 +192,7 @@ function showValue(f, v, html = true) {
   let text;
   if (Array.isArray(v)) text = v.join(", ");
   else if (f.type === "date") text = when(v, false);
-  else if (f.type === "number") text = num(v) + (f.unit ? " " + f.unit : "");
+  else if (f.type === "number") text = (f.be_year ? String(v) : num(v)) + (f.unit ? " " + f.unit : "");
   else text = String(v);
   return html ? esc(text) : text;
 }
@@ -1533,7 +1533,11 @@ function mapGenericRows(m, target) {
         if (f.required) problem = `ไม่มี${f.label}`;
         continue;
       }
-      if (f.type === "number") {
+      if (f.be_year) {
+        const y = beYear(raw);
+        if (y == null) problem = `${f.label} "${text}" ไม่ใช่ปี พ.ศ.`;
+        else row[f.name] = y;
+      } else if (f.type === "number") {
         const n = cellNum(raw);
         if (n == null) problem = `${f.label} "${text}" ไม่ใช่ตัวเลข`;
         else row[f.name] = n;
@@ -1557,6 +1561,17 @@ function mapGenericRows(m, target) {
     else rows.push(row);
   }
   return { rows, skipped };
+}
+
+// ปี พ.ศ. จากค่าใน Excel: 2560, ค.ศ. 2017, วันที่ 1/6/2560 หรือวันที่ที่ Excel เก็บเป็นตัวเลข
+function beYear(raw) {
+  const n = cellNum(raw);
+  if (n != null && Number.isInteger(n)) {
+    if (n >= 2400 && n <= 2800) return n;
+    if (n >= 1900 && n <= 2200) return n + 543;
+  }
+  const d = excelDate(raw);
+  return d ? Number(fixYear(d, null).slice(0, 4)) + 543 : null;
 }
 
 const uniqueKey = (v) => String(v ?? "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -1644,7 +1659,9 @@ async function directoryView(m) {
     <div id="dir-summary"></div>
     <div id="people"></div>`;
   const all = (await api("GET", `/records?module=${m.key}`))
-    .sort((a, b) => (a.data.seq ?? 1e9) - (b.data.seq ?? 1e9) || String(a.data.full_name).localeCompare(String(b.data.full_name), "th"));
+    .sort((a, b) => (a.data.start_year ?? 1e9) - (b.data.start_year ?? 1e9) || (a.data.seq ?? 1e9) - (b.data.seq ?? 1e9) ||
+      String(a.data.full_name).localeCompare(String(b.data.full_name), "th"));
+  const thisYear = new Date().getFullYear() + 543;
   let shown = [];
   const field = (name) => fieldOf(m, name);
   const draw = () => {
@@ -1664,6 +1681,8 @@ async function directoryView(m) {
           ${away ? badge(d.status, "muted") : ""}
         </div>
         <dl>
+          ${d.start_year ? `<dt>เริ่มปฏิบัติงาน</dt><dd>พ.ศ. ${esc(d.start_year)}${
+            d.start_year < thisYear ? ` <small>(${num(thisYear - d.start_year)} ปี)</small>` : d.start_year === thisYear ? " <small>(ปีแรก)</small>" : ""}</dd>` : ""}
           ${d.license ? `<dt>${esc(field("license").label)}</dt><dd>${esc(d.license)}</dd>` : ""}
           ${d.duty ? `<dt>${esc(field("duty").label)}</dt><dd class="pre">${esc(d.duty)}</dd>` : ""}
           ${d.phone ? `<dt>${esc(field("phone").label)}</dt><dd><a href="tel:${esc(d.phone.replace(/[^\d+]/g, ""))}">${esc(d.phone)}</a></dd>` : ""}
