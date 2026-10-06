@@ -563,10 +563,18 @@ const cellText = (v) => {
 };
 const cellNum = (v) => (v === "" || v == null || Number.isNaN(Number(v)) ? null : Number(v));
 
+// ช่องเลือกไฟล์ต้องอยู่ในหน้าระหว่างที่หน้าต่างเลือกไฟล์เปิดอยู่
+// ถ้าไม่แปะไว้ เบราว์เซอร์อาจเก็บกวาดทิ้งก่อนผู้ใช้เลือกเสร็จ แล้วจะไม่ได้รับไฟล์
 function pickFile(accept) {
   return new Promise((resolve) => {
-    const input = Object.assign(document.createElement("input"), { type: "file", accept });
-    input.onchange = () => resolve(input.files[0] || null);
+    const input = Object.assign(document.createElement("input"), { type: "file", accept, hidden: true });
+    const done = (file) => {
+      input.remove();
+      resolve(file);
+    };
+    input.addEventListener("change", () => done(input.files[0] || null), { once: true });
+    input.addEventListener("cancel", () => done(null), { once: true });
+    document.body.append(input);
     input.click();
   });
 }
