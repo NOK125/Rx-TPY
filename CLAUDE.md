@@ -47,7 +47,7 @@ data/          ฐานข้อมูล SQLite ในเครื่อง �
   ฝั่ง Worker ต้องใช้ `json_each` คำสั่งเดียว เพราะ D1 จำกัดจำนวนคำสั่งต่อครั้งและพารามิเตอร์ต่อคำสั่ง
 - `no_date: true` = งานที่ไม่มีวันที่ (บัญชียา) เซิร์ฟเวอร์ใส่ record_date เป็นวันที่บันทึกเอง และ Dashboard นับรวมทั้งหมด (`totals`)
 - `replace_by: "fiscal_year"` = นำเข้าแบบแทนที่ได้ (`replace` ใน body ของ /records/import, เฉพาะ admin) ลบแบบซ่อนรายการเดิมที่ค่าตรงกันก่อนนำเข้าในทรานแซกชันเดียว
-- อ่าน .xlsx ในเบราว์เซอร์เอง (`readXlsx` แตก zip ด้วย DecompressionStream) ไม่ใช้ไลบรารี การจับคู่คอลัมน์ Excel อยู่ที่ `mapOffhourSheets`
+- อ่าน .xlsx ในเบราว์เซอร์เอง (`readXlsx` แตก zip ด้วย `inflateRaw` ที่เขียนเอง) ไม่ใช้ไลบรารี ห้ามกลับไปใช้ DecompressionStream เพราะค้างเงียบใน Chrome บางเครื่อง และช่องเลือกไฟล์ (`pickFile`) ต้องแปะไว้ในหน้า การจับคู่คอลัมน์ Excel อยู่ที่ `mapOffhourSheets`
 
 ## รันและทดสอบ
 

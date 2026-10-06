@@ -440,7 +440,135 @@ async function moduleView(m) {
 }
 
 // ---------- อ่านไฟล์ Excel (.xlsx) และ CSV ในเบราว์เซอร์ ไม่ใช้ไลบรารี ----------
-// .xlsx คือไฟล์ zip ที่ข้างในเป็น XML: อ่านสารบัญ zip แล้วแตกไฟล์ด้วย DecompressionStream ของเบราว์เซอร์
+// .xlsx คือไฟล์ zip ที่ข้างในเป็น XML: อ่านสารบัญ zip แล้วแตกไฟล์ด้วย inflateRaw ด้านล่าง
+// (ไม่ใช้ DecompressionStream ของเบราว์เซอร์ เพราะพบว่าค้างเงียบใน Chrome บางเครื่อง)
+
+const LEN_BASE = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+const LEN_EXTRA = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+const DIST_BASE = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073,
+  4097, 6145, 8193, 12289, 16385, 24577];
+const DIST_EXTRA = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+const CODE_ORDER = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+
+// ตาราง Huffman แบบ canonical: นับจำนวนรหัสต่อความยาว แล้วเรียงสัญลักษณ์ตามความยาว
+function huffman(lengths) {
+  const counts = new Uint16Array(16);
+  for (const len of lengths) counts[len]++;
+  counts[0] = 0;
+  const offsets = new Uint16Array(16);
+  for (let i = 1; i < 16; i++) offsets[i] = offsets[i - 1] + counts[i - 1];
+  const symbols = new Uint16Array(lengths.length);
+  lengths.forEach((len, sym) => { if (len) symbols[offsets[len]++] = sym; });
+  return { counts, symbols };
+}
+
+const FIXED_LIT = huffman(Array.from({ length: 288 }, (_, i) => (i < 144 ? 8 : i < 256 ? 9 : i < 280 ? 7 : 8)));
+const FIXED_DIST = huffman(new Array(30).fill(5));
+
+// แตกข้อมูล deflate (RFC 1951) ด้วย JavaScript ล้วน
+function inflateRaw(src) {
+  let out = new Uint8Array(Math.max(src.length * 4, 1024));
+  let outLen = 0;
+  let pos = 0;
+  let bitBuf = 0;
+  let bitCount = 0;
+  const fail = () => { throw new Error("ข้อมูลในไฟล์ Excel เสียหาย"); };
+  const ensure = (n) => {
+    if (outLen + n <= out.length) return;
+    const bigger = new Uint8Array(Math.max(out.length * 2, outLen + n));
+    bigger.set(out.subarray(0, outLen));
+    out = bigger;
+  };
+  const bits = (n) => {
+    while (bitCount < n) {
+      if (pos >= src.length) fail();
+      bitBuf |= src[pos++] << bitCount;
+      bitCount += 8;
+    }
+    const v = bitBuf & ((1 << n) - 1);
+    bitBuf >>>= n;
+    bitCount -= n;
+    return v;
+  };
+  const decode = (h) => {
+    let code = 0;
+    let first = 0;
+    let index = 0;
+    for (let len = 1; len < 16; len++) {
+      code |= bits(1);
+      const count = h.counts[len];
+      if (code < first + count) return h.symbols[index + code - first];
+      index += count;
+      first = (first + count) << 1;
+      code <<= 1;
+    }
+    return fail();
+  };
+  let last = 0;
+  while (!last) {
+    last = bits(1);
+    const type = bits(2);
+    if (type === 0) {
+      bitBuf = 0;
+      bitCount = 0; // ทิ้งบิตที่เหลือของไบต์ปัจจุบัน
+      if (pos + 4 > src.length) fail();
+      const len = src[pos] | (src[pos + 1] << 8);
+      pos += 4;
+      if (pos + len > src.length) fail();
+      ensure(len);
+      out.set(src.subarray(pos, pos + len), outLen);
+      outLen += len;
+      pos += len;
+      continue;
+    }
+    let lit = FIXED_LIT;
+    let dist = FIXED_DIST;
+    if (type === 2) {
+      const nLit = bits(5) + 257;
+      const nDist = bits(5) + 1;
+      const nCode = bits(4) + 4;
+      const codeLengths = new Array(19).fill(0);
+      for (let i = 0; i < nCode; i++) codeLengths[CODE_ORDER[i]] = bits(3);
+      const codeTable = huffman(codeLengths);
+      const lengths = [];
+      while (lengths.length < nLit + nDist) {
+        const sym = decode(codeTable);
+        if (sym < 16) { lengths.push(sym); continue; }
+        let repeat;
+        let value = 0;
+        if (sym === 16) {
+          if (!lengths.length) fail();
+          value = lengths[lengths.length - 1];
+          repeat = 3 + bits(2);
+        } else repeat = sym === 17 ? 3 + bits(3) : 11 + bits(7);
+        while (repeat--) lengths.push(value);
+      }
+      if (lengths.length > nLit + nDist) fail();
+      lit = huffman(lengths.slice(0, nLit));
+      dist = huffman(lengths.slice(nLit));
+    } else if (type !== 1) fail();
+    for (;;) {
+      const sym = decode(lit);
+      if (sym < 256) {
+        ensure(1);
+        out[outLen++] = sym;
+      } else if (sym === 256) {
+        break;
+      } else {
+        const li = sym - 257;
+        if (li >= 29) fail();
+        const len = LEN_BASE[li] + bits(LEN_EXTRA[li]);
+        const di = decode(dist);
+        if (di >= 30) fail();
+        const d = DIST_BASE[di] + bits(DIST_EXTRA[di]);
+        if (d > outLen) fail();
+        ensure(len);
+        for (let k = 0; k < len; k++, outLen++) out[outLen] = out[outLen - d];
+      }
+    }
+  }
+  return out.subarray(0, outLen);
+}
 
 async function unzip(buffer) {
   const dv = new DataView(buffer);
@@ -467,7 +595,7 @@ async function unzip(buffer) {
     const data = new Uint8Array(buffer, start, f.size);
     if (f.method === 0) return decoder.decode(data);
     if (f.method !== 8) throw new Error("ไฟล์ Excel ใช้การบีบอัดแบบที่ไม่รองรับ");
-    return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).text();
+    return decoder.decode(inflateRaw(data));
   };
 }
 
@@ -532,10 +660,20 @@ function parseCsv(text) {
   return rows.map((r) => r.map((c) => (c.trim() !== "" && !Number.isNaN(Number(c)) ? Number(c) : c)));
 }
 
+// ถ้าอ่านไฟล์ไม่เสร็จในเวลาที่กำหนด ให้แจ้งเตือนแทนการค้างเงียบ
+function withTimeout(promise, ms, message) {
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); })])
+    .finally(() => clearTimeout(timer));
+}
+
 async function readSpreadsheet(file) {
-  if (/\.csv$/i.test(file.name)) return [{ name: file.name, rows: parseCsv((await file.text()).replace(/^﻿/, "")) }];
-  if (!/\.xlsx$/i.test(file.name)) throw new Error("รองรับเฉพาะไฟล์ .xlsx หรือ .csv (ไฟล์ .xls ให้เปิดใน Excel แล้ว Save As เป็น .xlsx)");
-  return readXlsx(await file.arrayBuffer());
+  const csv = /\.csv$/i.test(file.name);
+  if (!csv && !/\.xlsx$/i.test(file.name)) throw new Error("รองรับเฉพาะไฟล์ .xlsx หรือ .csv (ไฟล์ .xls ให้เปิดใน Excel แล้ว Save As เป็น .xlsx)");
+  toast(`กำลังอ่านไฟล์ ${file.name} ...`);
+  const locked = "อ่านไฟล์ไม่ได้ ถ้าไฟล์นี้เปิดอยู่ใน Excel ให้ปิดไฟล์ก่อนแล้วลองใหม่";
+  if (csv) return [{ name: file.name, rows: parseCsv((await withTimeout(file.text(), 20000, locked)).replace(/^﻿/, "")) }];
+  return readXlsx(await withTimeout(file.arrayBuffer(), 20000, locked));
 }
 
 // วันที่จาก Excel: เลขลำดับวันของ Excel หรือข้อความ วว/ดด/ปปปป (พ.ศ. หรือ ค.ศ.)
