@@ -274,6 +274,25 @@ td .btn { vertical-align: middle; }
 details { margin: .6rem 0; }
 details summary { cursor: pointer; color: var(--primary); }
 
+/* ทำเนียบเภสัชกร */
+.people { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: .9rem; }
+.person { display: flex; flex-direction: column; gap: .6rem; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 1rem; }
+.person.away { opacity: .75; }
+.person-head { display: flex; align-items: center; gap: .75rem; }
+.person-head > div { flex: 1; min-width: 0; }
+.person-head h3 { margin: 0; font-size: 1.02rem; overflow-wrap: anywhere; }
+.person-head p { margin: .1rem 0 0; color: var(--muted); font-size: .9rem; }
+.avatar {
+  flex: none; display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%;
+  background: var(--soft); color: var(--primary); font-weight: 700; font-size: 1.25rem;
+}
+.person dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .25rem .7rem; margin: 0; font-size: .9rem; }
+.person dt { color: var(--muted); }
+.person dd { margin: 0; overflow-wrap: anywhere; }
+.person a { color: var(--primary); }
+.person-actions { display: flex; gap: .4rem; margin-top: auto; padding-top: .3rem; }
+.person-actions .btn + .btn { margin-left: 0; }
+
 /* สรุปรายเดือน */
 .group-title { font-size: .95rem; color: var(--muted); margin: 1.2rem 0 .5rem; }
 .stats-card { padding: .7rem 1rem; }

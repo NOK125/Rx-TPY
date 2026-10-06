@@ -411,6 +411,7 @@ async function moduleView(m) {
   if (m.view === "calendar") return calendarView(m);
   if (m.view === "offhour") return offhourView(m);
   if (m.view === "formulary") return formularyView(m);
+  if (m.view === "directory") return directoryView(m);
   view.innerHTML = `<div class="toolbar">
       <h2>${esc(m.title)}</h2>
       ${monthInput()}
@@ -1485,6 +1486,214 @@ async function formularyView(m) {
   draw();
 }
 
+// ---------- นำเข้า Excel แบบทั่วไป (ใช้กับงานที่มี "import": "generic") ----------
+// หาแถวหัวตารางที่ชื่อคอลัมน์ตรงกับชื่อช่อง (label) หรือชื่ออื่น (aliases) ในนิยามงาน
+
+const normHead = (s) => String(s ?? "").replace(/\s+/g, "").toLowerCase();
+
+function findGenericSheet(m, sheets) {
+  const fields = allFields(m);
+  const names = (f) => [f.label, ...(f.aliases || [])].map(normHead);
+  for (const sheet of sheets) {
+    for (let h = 0; h < Math.min(sheet.rows.length, 15); h++) {
+      const head = (sheet.rows[h] || []).map(normHead);
+      const cols = {};
+      const used = new Set();
+      // จับคู่แบบตรงทุกตัวอักษรก่อน แล้วค่อยจับคู่แบบขึ้นต้นด้วยชื่อ
+      for (const exact of [true, false]) {
+        for (const f of fields) {
+          if (f.name in cols) continue;
+          const i = head.findIndex((c, idx) => c && !used.has(idx) &&
+            names(f).some((n) => (exact ? c === n : n.length >= 3 && c.startsWith(n))));
+          if (i >= 0) { cols[f.name] = i; used.add(i); }
+        }
+      }
+      const required = fields.filter((f) => f.required);
+      if (Object.keys(cols).length >= 2 && required.every((f) => f.name in cols)) return { sheet, head: h, cols };
+    }
+  }
+  return null;
+}
+
+function mapGenericRows(m, target) {
+  const fields = allFields(m).filter((f) => f.name in target.cols);
+  const rows = [];
+  const skipped = [];
+  const { sheet, head, cols } = target;
+  for (let i = head + 1; i < sheet.rows.length; i++) {
+    const c = sheet.rows[i] || [];
+    if (fields.every((f) => cellText(c[cols[f.name]]) === "")) continue; // แถวว่าง
+    const where = `ชีต ${sheet.name} แถว ${i + 1}`;
+    const row = { _row: `${i + 1} ชีต ${sheet.name}` };
+    let problem = null;
+    for (const f of fields) {
+      const raw = c[cols[f.name]];
+      const text = cellText(raw);
+      if (!text) {
+        if (f.required) problem = `ไม่มี${f.label}`;
+        continue;
+      }
+      if (f.type === "number") {
+        const n = cellNum(raw);
+        if (n == null) problem = `${f.label} "${text}" ไม่ใช่ตัวเลข`;
+        else row[f.name] = n;
+      } else if (f.type === "date") {
+        const d = excelDate(raw);
+        if (!d) problem = `${f.label} "${text}" ไม่ใช่วันที่`;
+        else row[f.name] = fixYear(d, null);
+      } else if (f.type === "select") {
+        const hit = f.options.find((o) => o.toLowerCase() === text.toLowerCase());
+        if (!hit) problem = `${f.label} "${text}" ไม่อยู่ในตัวเลือก (${f.options.join(", ")})`;
+        else row[f.name] = hit;
+      } else if (f.type === "multi") {
+        row[f.name] = text.split(/[,\/;\n]+/).map((s) => s.trim()).filter(Boolean)
+          .map((s) => f.options.find((o) => o.toLowerCase() === s.toLowerCase())).filter(Boolean);
+      } else {
+        row[f.name] = text;
+      }
+      if (problem) break;
+    }
+    if (problem) skipped.push(`${where}: ${problem}`);
+    else rows.push(row);
+  }
+  return { rows, skipped };
+}
+
+const uniqueKey = (v) => String(v ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+
+async function importGeneric(m) {
+  const file = await pickFile(".xlsx,.csv");
+  if (!file) return;
+  let target;
+  let existing;
+  try {
+    [target, existing] = await Promise.all([
+      readSpreadsheet(file).then((sheets) => findGenericSheet(m, sheets)),
+      api("GET", `/records?module=${m.key}`),
+    ]);
+  } catch (err) {
+    return toast(err.message, true);
+  }
+  if (!target) {
+    const need = allFields(m).filter((f) => f.required).map((f) => `"${f.label}"`).join(", ");
+    return toast(`ไม่พบแถวหัวตารางที่มีคอลัมน์ ${need} ในไฟล์นี้ (ดาวน์โหลด Excel เพื่อดูรูปแบบ)`, true);
+  }
+  const parsed = mapGenericRows(m, target);
+  const have = new Set(m.unique ? existing.map((r) => uniqueKey(r.data[m.unique])) : []);
+  const fresh = m.unique ? parsed.rows.filter((r) => !have.has(uniqueKey(r[m.unique]))) : parsed.rows;
+  const matched = allFields(m).filter((f) => f.name in target.cols).map((f) => f.label);
+  const info = (label, value) => `<div><small>${label}</small><div>${value}</div></div>`;
+  dlg.className = "wide";
+  dlg.innerHTML = dialogShell(`นำเข้า${esc(m.title)}จาก Excel`, `
+    <p class="hint">${esc(file.name)} · ชีต ${esc(target.sheet.name)} · คอลัมน์ที่พบ: ${esc(matched.join(", "))}</p>
+    <div class="info-grid">
+      ${info("จะนำเข้า", `<b>${num(fresh.length)}</b> รายการ`)}
+      ${m.unique ? info("มีอยู่แล้ว (ข้าม)", `${num(parsed.rows.length - fresh.length)} รายการ`) : ""}
+      ${info("ข้อมูลไม่ครบ (ข้าม)", `${num(parsed.skipped.length)} แถว`)}
+    </div>
+    ${parsed.skipped.length ? `<details><summary>ดูแถวที่ข้าม</summary><ul class="history">${parsed.skipped.slice(0, 50)
+      .map((s) => `<li>${esc(s)}</li>`).join("")}</ul></details>` : ""}`,
+    fresh.length ? `นำเข้า ${num(fresh.length)} รายการ` : null, fresh.length ? "ยกเลิก" : "ปิด");
+  wireDialog(async (_, form) => {
+    const submit = $("button[type=submit]", form);
+    let done = 0;
+    try {
+      for (let i = 0; i < fresh.length; i += 500) {
+        submit.textContent = `กำลังนำเข้า ${num(done)} / ${num(fresh.length)}`;
+        done += (await api("POST", "/records/import", { module: m.key, rows: fresh.slice(i, i + 500) })).inserted;
+      }
+    } catch (err) {
+      if (done) refresh();
+      throw new Error(done ? `นำเข้าแล้ว ${num(done)} รายการ แล้วเกิดข้อผิดพลาด: ${err.message}` : err.message);
+    }
+    toast(`นำเข้าแล้ว ${num(done)} รายการ`);
+    refresh();
+  });
+}
+
+// Excel รูปแบบเดียวกับที่นำเข้าได้ (หัวตาราง = ชื่อช่อง) ถ้าไม่มีข้อมูลจะได้แบบฟอร์มเปล่า
+function genericWorkbook(m, list) {
+  const fields = allFields(m);
+  return buildXlsx([{
+    name: m.title,
+    widths: fields.map((f) => (f.type === "textarea" ? 40 : f.type === "number" ? 10 : 22)),
+    bold: new Set([0]),
+    rows: [
+      fields.map((f) => f.label),
+      ...list.map((r) => {
+        const v = flat(r);
+        return fields.map((f) => (v[f.name] == null ? "" : Array.isArray(v[f.name]) ? v[f.name].join(", ") : v[f.name]));
+      }),
+    ],
+  }]);
+}
+
+// ---------- ทำเนียบเภสัชกร (การ์ดรายบุคคล) ----------
+
+const NAME_PREFIX = /^(ภก\.|ภญ\.|นพ\.|พญ\.|นางสาว|นาง|นาย|ดร\.)\s*/;
+const initials = (name) => (String(name ?? "").replace(NAME_PREFIX, "").trim().charAt(0) || "?");
+
+async function directoryView(m) {
+  view.innerHTML = `<div class="toolbar">
+      <h2>${esc(m.title)}</h2>
+      <input type="search" id="q" placeholder="ค้นหาชื่อ ตำแหน่ง หรืองานที่รับผิดชอบ">
+      <button class="btn" data-act="import">นำเข้า Excel</button>
+      <button class="btn" data-act="xlsx">ดาวน์โหลด Excel</button>
+      <button class="btn primary" data-act="new">+ เพิ่มรายชื่อ</button>
+    </div>
+    <div id="dir-summary"></div>
+    <div id="people"></div>`;
+  const all = (await api("GET", `/records?module=${m.key}`))
+    .sort((a, b) => (a.data.seq ?? 1e9) - (b.data.seq ?? 1e9) || String(a.data.full_name).localeCompare(String(b.data.full_name), "th"));
+  let shown = [];
+  const field = (name) => fieldOf(m, name);
+  const draw = () => {
+    const q = $("#q").value.trim().toLowerCase();
+    shown = q ? all.filter((r) => recordText(r).includes(q)) : all;
+    const active = all.filter((r) => !r.data.status || r.data.status === "ปฏิบัติงาน").length;
+    $("#dir-summary").innerHTML = all.length ? `<p class="hint">ทั้งหมด ${num(all.length)} คน · ปฏิบัติงาน ${num(active)} คน${
+      q ? ` · พบ ${num(shown.length)} คน` : ""}</p>` : "";
+    const canEdit = (r) => me.role === "admin" || r.created_by === me.id;
+    $("#people").innerHTML = shown.length ? `<div class="people">${shown.map((r) => {
+      const d = r.data;
+      const away = d.status && d.status !== "ปฏิบัติงาน";
+      return `<article class="person${away ? " away" : ""}">
+        <div class="person-head">
+          <span class="avatar" aria-hidden="true">${esc(initials(d.full_name))}</span>
+          <div><h3>${esc(d.full_name)}</h3><p>${esc(d.position || "")}</p></div>
+          ${away ? badge(d.status, "muted") : ""}
+        </div>
+        <dl>
+          ${d.license ? `<dt>${esc(field("license").label)}</dt><dd>${esc(d.license)}</dd>` : ""}
+          ${d.duty ? `<dt>${esc(field("duty").label)}</dt><dd class="pre">${esc(d.duty)}</dd>` : ""}
+          ${d.phone ? `<dt>${esc(field("phone").label)}</dt><dd><a href="tel:${esc(d.phone.replace(/[^\d+]/g, ""))}">${esc(d.phone)}</a></dd>` : ""}
+          ${d.email ? `<dt>${esc(field("email").label)}</dt><dd><a href="mailto:${esc(d.email)}">${esc(d.email)}</a></dd>` : ""}
+          ${d.note ? `<dt>${esc(field("note").label)}</dt><dd class="pre">${esc(d.note)}</dd>` : ""}
+        </dl>
+        <div class="person-actions">
+          ${canEdit(r) ? btn("edit", "แก้ไข", r.id) : btn("open", "ดู", r.id)}
+          ${me.role === "admin" ? btn("delete", "ลบ", r.id, "danger") : ""}
+        </div>
+      </article>`;
+    }).join("")}</div>` : `<p class="empty">${q ? "ไม่พบรายชื่อที่ค้นหา" : 'ยังไม่มีรายชื่อ กด "+ เพิ่มรายชื่อ" หรือ "นำเข้า Excel" (กด "ดาวน์โหลด Excel" เพื่อรับแบบฟอร์ม)'}</p>`;
+  };
+  $("#q").oninput = draw;
+  const byId = (id) => all.find((r) => String(r.id) === String(id));
+  bind({
+    new: () => openRecordForm(m),
+    open: (id) => openRecord(id),
+    edit: (id) => openRecordForm(m, byId(id)),
+    delete: async (id) => {
+      const r = byId(id);
+      if (!confirm(`ลบ ${r.data.full_name} ออกจากทำเนียบ? (ข้อมูลยังเก็บไว้ในประวัติ)`)) return;
+      try { await api("POST", `/records/${id}/delete`, {}); toast("ลบแล้ว"); refresh(); } catch (err) { toast(err.message, true); }
+    },
+    import: () => importGeneric(m),
+    xlsx: () => downloadBlob(genericWorkbook(m, shown), `${m.title}.xlsx`),
+  });
+  draw();
+}
+
 // ตารางเวร: แสดงเป็นปฏิทินรายเดือน (มือถือแสดงเป็นรายการวัน)
 async function calendarView(m) {
   if (!currentMonth) currentMonth = isoDate().slice(0, 7);
@@ -1707,7 +1916,7 @@ async function dashboardView() {
       <section class="mod-grid">${mods.map((m) => `<button type="button" class="mod-card g${gi}" data-act="go" data-id="${m.key}">
         <span class="mod-icon">${icon(m.key)}</span>
         <span><b>${num((m.no_date ? s.totals?.[m.key] : s.counts[m.key]) || 0)}</b><span>${esc(m.title)}${
-          m.no_date ? " <small>(รายการ)</small>" : ""}</span></span></button>`).join("")}</section>`).join("")}
+          m.no_date ? ` <small>(${esc(m.count_unit || "รายการ")})</small>` : ""}</span></span></button>`).join("")}</section>`).join("")}
     <section class="card offhour-panel" id="offhour-panel" hidden></section>
     <div class="grid2">
       <section class="card"><h2>เวรวันนี้ <small>${when(s.today, false)}</small></h2>

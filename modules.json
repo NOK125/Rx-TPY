@@ -182,6 +182,29 @@
   "sums": ["estimate"]
  },
  {
+  "key": "pharmacists",
+  "group": "งานบริหาร",
+  "title": "ทำเนียบเภสัชกร",
+  "view": "directory",
+  "no_date": true,
+  "import": "generic",
+  "unique": "full_name",
+  "count_unit": "คน",
+  "fields": [
+   {"name": "seq", "label": "ลำดับ", "type": "number", "min": 0, "aliases": ["ลำดับที่"]},
+   {"name": "full_name", "label": "ชื่อ-นามสกุล", "type": "text", "required": true, "placeholder": "เช่น ภญ.สมใจ ใจดี", "aliases": ["ชื่อ", "ชื่อ-สกุล", "ชื่อสกุล"]},
+   {"name": "position", "label": "ตำแหน่ง", "type": "text", "placeholder": "เช่น เภสัชกรชำนาญการ"},
+   {"name": "license", "label": "เลขที่ใบประกอบวิชาชีพ", "type": "text", "aliases": ["ใบประกอบวิชาชีพ", "เลขใบประกอบ"]},
+   {"name": "duty", "label": "งานที่รับผิดชอบ", "type": "textarea", "aliases": ["หน้าที่", "หน้าที่รับผิดชอบ"]},
+   {"name": "phone", "label": "เบอร์โทรศัพท์", "type": "text", "aliases": ["เบอร์โทร", "โทรศัพท์", "โทร"]},
+   {"name": "email", "label": "อีเมล", "type": "text", "aliases": ["email", "e-mail"]},
+   {"name": "status", "label": "สถานะ", "type": "select", "options": ["ปฏิบัติงาน", "ลาศึกษาต่อ", "ลาคลอด", "ย้าย / ลาออก", "อื่น ๆ"]},
+   {"name": "note", "label": "หมายเหตุ", "type": "textarea"}
+  ],
+  "list": ["position", "license", "phone"],
+  "stats": ["position", "status"]
+ },
+ {
   "key": "stock_check",
   "group": "งานบริหาร",
   "title": "ตรวจสอบ STOCK หน่วยบริการ",
