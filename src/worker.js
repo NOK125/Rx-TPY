@@ -7,6 +7,8 @@ const SESSION_HOURS = 12;
 const COOKIE_NAME = "rx_tpy_session";
 const PBKDF2_ITERATIONS = 100_000; // Workers รองรับ PBKDF2 ได้สูงสุด 100,000 รอบ
 const MAX_BODY = 1024 * 1024;
+const FILE_CHUNK = 700_000; // ไบต์ต่อส่วนของไฟล์แนบ (base64 แล้วยังไม่เกิน MAX_BODY และไม่เกินขนาดแถวของ D1)
+const MAX_FILE = 20 * 1024 * 1024;
 const TZ_OFFSET_MS = 7 * 3600 * 1000; // เวลาประเทศไทย (Workers ใช้ UTC)
 
 const ROLES = { admin: "ผู้ดูแลระบบ", pharmacist: "เภสัชกร" };
@@ -51,6 +53,23 @@ const SCHEMA = [
   "CREATE INDEX IF NOT EXISTS idx_rec_module_date ON records(module, record_date)",
   "CREATE INDEX IF NOT EXISTS idx_rec_hn ON records(hn)",
   "CREATE INDEX IF NOT EXISTS idx_log_record ON record_log(record_id)",
+  // ไฟล์แนบ (PDF) เก็บเป็น base64 แบ่งเป็นส่วน ๆ เพราะ D1 จำกัดขนาดต่อแถว
+  `CREATE TABLE IF NOT EXISTS files (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    chunks INTEGER NOT NULL,
+    complete INTEGER NOT NULL DEFAULT 0,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS file_chunks (
+    file_id INTEGER NOT NULL REFERENCES files(id),
+    n INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (file_id, n)
+  )`,
 ];
 
 class ApiError extends Error {
@@ -310,6 +329,16 @@ function cleanField(field, value) {
   const required = Boolean(field.required);
   if (type === "number") return toNum(value, label, required, field.min, field.max);
   if (type === "date") return toDate(value, label, required);
+  if (type === "file") {
+    // เก็บแค่ id ไว้ก่อน withFiles จะเติมชื่อและขนาดจากตาราง files
+    if (value == null || value === "") {
+      if (required) throw new ApiError(400, `กรุณาแนบ${label}`);
+      return null;
+    }
+    const id = toNum(typeof value === "object" ? value.id : value, label, true, 1);
+    if (!Number.isInteger(id)) throw new ApiError(400, `${label}ไม่ถูกต้อง`);
+    return { id };
+  }
   if (type === "multi") {
     const values = (Array.isArray(value) ? value : value == null || value === "" ? [] : [value]).map(String);
     if (values.some((v) => !field.options.includes(v))) throw new ApiError(400, `${label}: ตัวเลือกไม่ถูกต้อง`);
@@ -337,7 +366,24 @@ function recordValues(module, body) {
     const value = cleanField(field, body[field.name]);
     if (value != null) data[field.name] = value;
   }
-  return { recordDate, hn, patientName, data: JSON.stringify(data) };
+  return { recordDate, hn, patientName, fields: data };
+}
+
+// ตรวจว่าไฟล์แนบอัปโหลดครบแล้ว เติมชื่อและขนาดไฟล์ แล้วแปลงข้อมูลเป็น JSON สำหรับบันทึก
+async function withFiles(db, module, v) {
+  const fileFields = module.fields.filter((f) => f.type === "file" && v.fields[f.name]);
+  if (fileFields.length) {
+    const ids = fileFields.map((f) => v.fields[f.name].id);
+    const { results } = await db.prepare(
+      "SELECT id, name, size FROM files WHERE complete = 1 AND id IN (SELECT value FROM json_each(?))",
+    ).bind(JSON.stringify(ids)).all();
+    for (const f of fileFields) {
+      const row = results.find((r) => r.id === v.fields[f.name].id);
+      if (!row) throw new ApiError(400, `${f.label}: ไม่พบไฟล์ที่อัปโหลด กรุณาเลือกไฟล์ใหม่`);
+      v.fields[f.name] = { id: row.id, name: row.name, size: row.size };
+    }
+  }
+  return { ...v, data: JSON.stringify(v.fields) };
 }
 
 const RECORD_SELECT = `
@@ -400,7 +446,7 @@ const getRecordEndpoint = (req, recordId) => getRecord(req.db, recordId);
 
 async function createRecord(req) {
   const module = getModule(req.body.module);
-  const v = recordValues(module, req.body);
+  const v = await withFiles(req.db, module, recordValues(module, req.body));
   const [inserted] = await req.db.batch([
     req.db.prepare(
       "INSERT INTO records (module, record_date, hn, patient_name, data, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -423,16 +469,17 @@ async function importRecords(req) {
   const rows = req.body.rows;
   if (!Array.isArray(rows) || !rows.length) throw new ApiError(400, "ไม่มีข้อมูลที่จะนำเข้า");
   if (rows.length > MAX_IMPORT) throw new ApiError(400, `นำเข้าได้ครั้งละไม่เกิน ${MAX_IMPORT} แถว`);
-  const values = rows.map((row, i) => {
+  const values = [];
+  for (const [i, row] of rows.entries()) {
     if (!row || typeof row !== "object" || Array.isArray(row)) throw new ApiError(400, `แถวที่ ${i + 1}: ข้อมูลไม่ถูกต้อง`);
     try {
-      const v = recordValues(module, row);
-      return { record_date: v.recordDate, hn: v.hn, patient_name: v.patientName, data: v.data };
+      const v = await withFiles(req.db, module, recordValues(module, row));
+      values.push({ record_date: v.recordDate, hn: v.hn, patient_name: v.patientName, data: v.data });
     } catch (err) {
       if (err instanceof ApiError) throw new ApiError(400, `แถวที่ ${row._row ?? i + 1}: ${err.message}`);
       throw err;
     }
-  });
+  }
   const ts = now();
   const statements = [];
   if (req.body.replace != null) {
@@ -473,7 +520,8 @@ function canEdit(req, rec) {
 async function updateRecord(req, recordId) {
   const rec = await getRecord(req.db, recordId);
   canEdit(req, rec);
-  const v = recordValues(getModule(rec.module), req.body);
+  const module = getModule(rec.module);
+  const v = await withFiles(req.db, module, recordValues(module, req.body));
   await req.db.batch([
     req.db.prepare(
       "UPDATE records SET record_date = ?, hn = ?, patient_name = ?, data = ?, updated_by = ?, updated_at = ? WHERE id = ?",
@@ -500,6 +548,68 @@ async function recordHistory(req, recordId) {
      FROM record_log l JOIN users u ON u.id = l.user_id WHERE l.record_id = ? ORDER BY l.id`,
   ).bind(recordId).all();
   return results.map((entry) => ({ ...entry, snapshot: recordDict(JSON.parse(entry.snapshot)) }));
+}
+
+// ---------- ไฟล์แนบ ----------
+// อัปโหลด: POST /files (ชื่อ ขนาด) → POST /files/{id}/chunks (ทีละส่วน base64) → POST /files/{id}/finish
+// เปิดไฟล์: GET /files/{id} แล้ว GET /files/{id}/chunks/{n} ทีละส่วน หน้าเว็บประกอบไฟล์เอง
+// (ส่งเป็นข้อความ base64 เพื่อไม่ต้องแปลงข้อมูลใน Worker ซึ่งจำกัดเวลาประมวลผล)
+
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+
+async function getFileRow(db, fileId) {
+  const row = await db.prepare("SELECT * FROM files WHERE id = ?").bind(fileId).first();
+  if (!row) throw new ApiError(404, "ไม่พบไฟล์นี้");
+  return row;
+}
+
+async function createFile(req) {
+  const name = toStr(req.body.name, "ชื่อไฟล์", true, 200);
+  if (!name.toLowerCase().endsWith(".pdf")) throw new ApiError(400, "รองรับเฉพาะไฟล์ PDF");
+  const size = toNum(req.body.size, "ขนาดไฟล์", true, 1, MAX_FILE);
+  if (!Number.isInteger(size)) throw new ApiError(400, "ขนาดไฟล์ไม่ถูกต้อง");
+  const chunks = Math.ceil(size / FILE_CHUNK);
+  const result = await req.db.prepare(
+    "INSERT INTO files (name, mime, size, chunks, created_by, created_at) VALUES (?, 'application/pdf', ?, ?, ?, ?)",
+  ).bind(name, size, chunks, req.user.id, now()).run();
+  return { id: result.meta.last_row_id, chunks, chunk_size: FILE_CHUNK };
+}
+
+async function putFileChunk(req, fileId) {
+  const f = await getFileRow(req.db, fileId);
+  if (f.created_by !== req.user.id) throw new ApiError(403, "อัปโหลดต่อได้เฉพาะผู้สร้างไฟล์");
+  if (f.complete) throw new ApiError(409, "ไฟล์นี้อัปโหลดเสร็จแล้ว");
+  const n = toNum(req.body.n, "ลำดับส่วนของไฟล์", true, 0, f.chunks - 1);
+  if (!Number.isInteger(n)) throw new ApiError(400, "ลำดับส่วนของไฟล์ไม่ถูกต้อง");
+  const data = req.body.data;
+  if (typeof data !== "string" || data.length > Math.ceil(FILE_CHUNK / 3) * 4 || !BASE64.test(data)) {
+    throw new ApiError(400, "ข้อมูลไฟล์ไม่ถูกต้อง");
+  }
+  await req.db.prepare("INSERT OR REPLACE INTO file_chunks (file_id, n, data) VALUES (?, ?, ?)").bind(fileId, n, data).run();
+  return { ok: true };
+}
+
+async function finishFile(req, fileId) {
+  const f = await getFileRow(req.db, fileId);
+  if (f.created_by !== req.user.id) throw new ApiError(403, "อัปโหลดต่อได้เฉพาะผู้สร้างไฟล์");
+  const row = await req.db.prepare(`SELECT COUNT(*) AS n,
+      COALESCE(SUM(LENGTH(data) * 3 / 4 - (CASE WHEN data LIKE '%==' THEN 2 WHEN data LIKE '%=' THEN 1 ELSE 0 END)), 0) AS size
+    FROM file_chunks WHERE file_id = ?`).bind(fileId).first();
+  if (row.n !== f.chunks || row.size !== f.size) throw new ApiError(400, "อัปโหลดไฟล์ไม่ครบ กรุณาลองใหม่");
+  await req.db.prepare("UPDATE files SET complete = 1 WHERE id = ?").bind(fileId).run();
+  return { id: fileId, name: f.name, size: f.size };
+}
+
+async function fileMeta(req, fileId) {
+  const f = await getFileRow(req.db, fileId);
+  if (!f.complete) throw new ApiError(404, "ไฟล์นี้อัปโหลดไม่สำเร็จ");
+  return { id: f.id, name: f.name, mime: f.mime, size: f.size, chunks: f.chunks };
+}
+
+async function fileChunk(req, fileId, n) {
+  const row = await req.db.prepare("SELECT data FROM file_chunks WHERE file_id = ? AND n = ?").bind(fileId, n).first();
+  if (!row) throw new ApiError(404, "ไม่พบข้อมูลไฟล์");
+  return { data: row.data };
 }
 
 // ---------- ภาพรวม ----------
@@ -561,6 +671,11 @@ route("PUT", `/records/${ID}`, updateRecord);
 route("POST", `/records/${ID}/delete`, deleteRecord, "admin");
 route("GET", `/records/${ID}/history`, recordHistory);
 route("GET", "/summary", summary);
+route("POST", "/files", createFile);
+route("POST", `/files/${ID}/chunks`, putFileChunk);
+route("POST", `/files/${ID}/finish`, finishFile);
+route("GET", `/files/${ID}`, fileMeta);
+route("GET", `/files/${ID}/chunks/${ID}`, fileChunk);
 
 let schemaReady = null;
 function ensureSchema(db) {

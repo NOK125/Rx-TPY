@@ -80,6 +80,15 @@ function fieldHtml(f, values = {}) {
   const v = values[f.name] ?? f.value ?? "";
   const label = `${esc(f.label)}${f.unit ? ` <small>(${esc(f.unit)})</small>` : ""}${f.required ? " *" : ""}`;
   const hint = f.hint ? `<small>${esc(f.hint)}</small>` : "";
+  if (f.type === "file") {
+    const cur = v && typeof v === "object" ? v : null;
+    return `<div class="field full"><span>${label}</span>
+      <input type="hidden" name="${f.name}" value="${cur ? Number(cur.id) : ""}">
+      ${cur ? `<div class="file-current">${fileLink(cur)} <small>${fileSize(cur.size)}</small>
+        <button type="button" class="btn small" data-clear-file="${f.name}">เอาไฟล์ออก</button></div>` : ""}
+      <input type="file" name="${f.name}__upload" accept="${esc(f.accept || ".pdf")}" aria-label="${esc(f.label)}">
+      <small>${cur ? "เลือกไฟล์ใหม่ถ้าต้องการแทนที่ไฟล์เดิม" : "รองรับไฟล์ PDF ขนาดไม่เกิน 20 MB"}</small>${hint}</div>`;
+  }
   if (f.type === "multi") {
     const chosen = Array.isArray(v) ? v : [];
     return `<fieldset class="field full"><legend>${label}</legend><div class="checks">${f.options.map((o) =>
@@ -190,6 +199,7 @@ const flat = (rec) => ({ record_date: rec.record_date, hn: rec.hn, patient_name:
 function showValue(f, v, html = true) {
   if (v == null || v === "" || (Array.isArray(v) && !v.length)) return "-";
   let text;
+  if (f.type === "file") return html ? `${fileLink(v)} <small>${fileSize(v.size)}</small>` : v.name;
   if (Array.isArray(v)) text = v.join(", ");
   else if (f.type === "date") text = when(v, false);
   else if (f.type === "number") text = (f.be_year ? String(v) : num(v)) + (f.unit ? " " + f.unit : "");
@@ -197,7 +207,8 @@ function showValue(f, v, html = true) {
   return html ? esc(text) : text;
 }
 
-const recordText = (r) => [r.hn, r.patient_name, ...Object.values(r.data).flat()].join(" ").toLowerCase();
+const recordText = (r) => [r.hn, r.patient_name, ...Object.values(r.data).flat()
+  .map((v) => (v && typeof v === "object" ? v.name : v))].join(" ").toLowerCase();
 
 function summaryText(m, r) {
   return m.list.slice(0, 3).map((n) => {
@@ -253,10 +264,26 @@ function openRecordForm(m, rec = null, preset = {}) {
     submitLabel: "บันทึก",
     onSubmit: async (_, f) => {
       const body = { module: m.key, ...formValues(f, fields) };
+      // อัปโหลดไฟล์ที่เลือกใหม่ก่อน แล้วส่ง id ไฟล์ไปกับบันทึก
+      for (const field of fields.filter((x) => x.type === "file")) {
+        const file = f.querySelector(`[name="${field.name}__upload"]`)?.files[0];
+        if (!file) continue;
+        const submit = $("button[type=submit]", f);
+        const up = await uploadFile(file, (p) => { submit.textContent = `กำลังอัปโหลด ${Math.round(p * 100)}%`; });
+        body[field.name] = up.id;
+        f.querySelector(`[name="${field.name}"]`).value = up.id;
+        f.querySelector(`[name="${field.name}__upload"]`).value = "";
+      }
       await api(rec ? "PUT" : "POST", rec ? `/records/${rec.id}` : "/records", body);
       toast(rec ? "บันทึกการแก้ไขแล้ว" : "บันทึกแล้ว");
       refresh();
     },
+  });
+  form.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-clear-file]");
+    if (!b) return;
+    form.querySelector(`[name="${b.dataset.clearFile}"]`).value = "";
+    b.closest(".file-current").remove();
   });
   if (m.patient) {
     const hn = $("[name=hn]", form);
@@ -412,6 +439,7 @@ async function moduleView(m) {
   if (m.view === "offhour") return offhourView(m);
   if (m.view === "formulary") return formularyView(m);
   if (m.view === "directory") return directoryView(m);
+  if (m.view === "documents") return documentsView(m);
   view.innerHTML = `<div class="toolbar">
       <h2>${esc(m.title)}</h2>
       ${monthInput()}
@@ -1709,6 +1737,218 @@ async function directoryView(m) {
     },
     import: () => importGeneric(m),
     xlsx: () => downloadBlob(genericWorkbook(m, shown), `${m.title}.xlsx`),
+  });
+  draw();
+}
+
+// ---------- ไฟล์แนบ (PDF) ----------
+// อัปโหลดทีละส่วนเป็น base64 แล้วเซิร์ฟเวอร์เก็บไว้ในฐานข้อมูล เปิดไฟล์โดยดึงทุกส่วนมาประกอบเป็น Blob
+
+const fileSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const fileLink = (f) => `<button type="button" class="link-btn" data-open-file="${Number(f.id)}">📄 ${esc(f.name)}</button>`;
+
+function blobToBase64(blob) {
+  const read = new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(new Error("อ่านไฟล์ไม่ได้"));
+    reader.readAsDataURL(blob);
+  });
+  return withTimeout(read, 20000, "อ่านไฟล์ไม่ได้ ถ้าไฟล์นี้เปิดอยู่ในโปรแกรมอื่นให้ปิดก่อนแล้วลองใหม่");
+}
+
+function base64ToBytes(text) {
+  const bin = atob(text);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function uploadFile(file, onProgress = () => {}) {
+  if (!/\.pdf$/i.test(file.name)) throw new Error(`${file.name}: รองรับเฉพาะไฟล์ PDF`);
+  if (!file.size) throw new Error(`${file.name}: ไฟล์ว่างเปล่า`);
+  const meta = await api("POST", "/files", { name: file.name, size: file.size });
+  for (let n = 0; n < meta.chunks; n++) {
+    const data = await blobToBase64(file.slice(n * meta.chunk_size, (n + 1) * meta.chunk_size));
+    await api("POST", `/files/${meta.id}/chunks`, { n, data });
+    onProgress((n + 1) / meta.chunks);
+  }
+  return api("POST", `/files/${meta.id}/finish`, {});
+}
+
+async function openFile(id, download = false) {
+  // เปิดแท็บใหม่ทันทีตอนกด (ถ้ารอโหลดเสร็จก่อน เบราว์เซอร์จะบล็อกป๊อปอัป)
+  const win = download ? null : window.open("", "_blank");
+  if (win) win.document.write('<p style="font-family:sans-serif;padding:1rem">กำลังโหลดไฟล์...</p>');
+  try {
+    toast("กำลังโหลดไฟล์...");
+    const meta = await api("GET", `/files/${id}`);
+    const parts = [];
+    for (let n = 0; n < meta.chunks; n++) parts.push(base64ToBytes((await api("GET", `/files/${id}/chunks/${n}`)).data));
+    const url = URL.createObjectURL(new Blob(parts, { type: meta.mime }));
+    if (win) {
+      win.location.href = url;
+    } else {
+      const a = Object.assign(document.createElement("a"), { href: url, download: meta.name });
+      document.body.append(a);
+      a.click();
+      a.remove();
+    }
+    $("#toast").hidden = true;
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+  } catch (err) {
+    if (win) win.close();
+    toast(err.message, true);
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-open-file]");
+  if (!b) return;
+  e.preventDefault();
+  openFile(Number(b.dataset.openFile), b.hasAttribute("data-download"));
+});
+
+function pickFiles(accept) {
+  return new Promise((resolve) => {
+    const input = Object.assign(document.createElement("input"), { type: "file", accept, multiple: true, hidden: true });
+    const done = (files) => {
+      input.remove();
+      resolve(files);
+    };
+    input.addEventListener("change", () => done([...input.files]), { once: true });
+    input.addEventListener("cancel", () => done([]), { once: true });
+    document.body.append(input);
+    input.click();
+  });
+}
+
+// ---------- แนวทางปฏิบัติด้านระบบยา (เอกสาร PDF แยกหมวด) ----------
+
+const MAX_PDF = 20 * 1024 * 1024;
+
+function guessCategory(name, options) {
+  const rules = [
+    [/นโยบาย/, "นโยบาย"],
+    [/ระเบียบ/, "ระเบียบปฏิบัติ"],
+    [/(^|[^a-z])wi([^a-z]|$)|วิธีปฏิบัติ/i, "WI (วิธีปฏิบัติงาน)"],
+    [/คู่มือ/, "คู่มือ"],
+    [/แบบฟอร์ม|form/i, "แบบฟอร์ม"],
+    [/แนวทาง|sop|มาตรการ/i, "แนวทางปฏิบัติ"],
+  ];
+  const hit = rules.find(([re]) => re.test(name));
+  return hit && options.includes(hit[1]) ? hit[1] : options.includes("อื่น ๆ") ? "อื่น ๆ" : options[0];
+}
+
+const titleFromFile = (name) => name.replace(/\.pdf$/i, "").replace(/_/g, " ").replace(/\s+/g, " ").trim();
+
+async function importPdfs(m) {
+  const files = await pickFiles(".pdf");
+  if (!files.length) return;
+  const existing = await api("GET", `/records?module=${m.key}`);
+  const have = new Set(existing.map((r) => uniqueKey(r.data.title)));
+  const options = fieldOf(m, "category").options;
+  const rows = files.map((file, i) => {
+    const title = titleFromFile(file.name);
+    const problem = !/\.pdf$/i.test(file.name) ? "ไม่ใช่ไฟล์ PDF" : file.size > MAX_PDF ? `ใหญ่เกิน ${fileSize(MAX_PDF)}` : !file.size ? "ไฟล์ว่าง" : "";
+    return { i, file, title, category: guessCategory(file.name, options), problem, dup: have.has(uniqueKey(title)) };
+  });
+  dlg.className = "wide";
+  dlg.innerHTML = dialogShell("นำเข้าไฟล์ PDF", `
+    <p class="hint">ตรวจชื่อเอกสารและหมวดหมู่ที่ระบบเดาจากชื่อไฟล์ แก้ได้ก่อนกดนำเข้า ไฟล์ที่ชื่อซ้ำกับเอกสารที่มีอยู่จะไม่ถูกเลือกไว้</p>
+    <div class="table-wrap"><table class="pdf-import"><thead><tr><th></th><th>ไฟล์</th><th>ชื่อเอกสาร</th><th>หมวดหมู่</th></tr></thead><tbody>
+    ${rows.map((r) => `<tr>
+      <td><input type="checkbox" data-pick="${r.i}" ${r.problem || r.dup ? "" : "checked"} ${r.problem ? "disabled" : ""} aria-label="นำเข้า ${esc(r.file.name)}"></td>
+      <td><small>${esc(r.file.name)}<br>${fileSize(r.file.size)}</small>${r.problem ? `<br>${badge(r.problem, "bad")}` : r.dup ? `<br>${badge("มีชื่อนี้แล้ว", "warn")}` : ""}</td>
+      <td><input data-title="${r.i}" value="${esc(r.title)}" aria-label="ชื่อเอกสาร"></td>
+      <td><select data-cat="${r.i}" aria-label="หมวดหมู่">${options.map((o) => option(o, o, r.category)).join("")}</select></td>
+    </tr>`).join("")}</tbody></table></div>
+    <p class="meta" id="pdf-progress"></p>`, "นำเข้าไฟล์ที่เลือก");
+  wireDialog(async (_, form) => {
+    const chosen = rows.filter((r) => form.querySelector(`[data-pick="${r.i}"]`).checked);
+    if (!chosen.length) throw new Error("ยังไม่ได้เลือกไฟล์");
+    const submit = $("button[type=submit]", form);
+    const progress = $("#pdf-progress", form);
+    const failed = [];
+    let done = 0;
+    for (const [k, r] of chosen.entries()) {
+      const title = form.querySelector(`[data-title="${r.i}"]`).value.trim() || titleFromFile(r.file.name);
+      const category = form.querySelector(`[data-cat="${r.i}"]`).value;
+      try {
+        const up = await uploadFile(r.file, (p) => {
+          submit.textContent = `กำลังอัปโหลด ${k + 1} / ${chosen.length} (${Math.round(p * 100)}%)`;
+        });
+        await api("POST", "/records", { module: m.key, title, category, file: up.id });
+        done++;
+        // กันนำเข้าซ้ำถ้ากดลองใหม่หลังมีบางไฟล์ไม่สำเร็จ
+        Object.assign(form.querySelector(`[data-pick="${r.i}"]`), { checked: false, disabled: true });
+      } catch (err) {
+        failed.push(`${r.file.name}: ${err.message}`);
+      }
+      progress.textContent = `นำเข้าแล้ว ${done} / ${chosen.length}${failed.length ? ` · ไม่สำเร็จ ${failed.length}` : ""}`;
+    }
+    refresh();
+    if (failed.length) {
+      submit.textContent = "ปิด";
+      throw new Error(`นำเข้าแล้ว ${done} ไฟล์ ไม่สำเร็จ ${failed.length} ไฟล์: ${failed.join(" · ")}`);
+    }
+    toast(`นำเข้าแล้ว ${done} ไฟล์`);
+  });
+}
+
+async function documentsView(m) {
+  const options = fieldOf(m, "category").options;
+  view.innerHTML = `<div class="toolbar">
+      <h2>${esc(m.title)}</h2>
+      <select id="cat" aria-label="หมวดหมู่">${option("", "ทุกหมวดหมู่")}${options.map((o) => option(o, o)).join("")}</select>
+      <input type="search" id="q" placeholder="ค้นหาชื่อเอกสาร หรือเลขที่">
+      <button class="btn" data-act="import">นำเข้า PDF</button>
+      <button class="btn primary" data-act="new">+ เพิ่มเอกสาร</button>
+    </div>
+    <div id="docs"></div>`;
+  const all = (await api("GET", `/records?module=${m.key}`))
+    .sort((a, b) => String(a.data.title).localeCompare(String(b.data.title), "th"));
+  const byId = (id) => all.find((r) => String(r.id) === String(id));
+  const draw = () => {
+    const cat = $("#cat").value;
+    const q = $("#q").value.trim().toLowerCase();
+    const shown = all.filter((r) => (!cat || r.data.category === cat) && (!q || recordText(r).includes(q)));
+    const canEdit = (r) => me.role === "admin" || r.created_by === me.id;
+    const groups = options.map((o) => [o, shown.filter((r) => r.data.category === o)]).filter(([, list]) => list.length);
+    $("#docs").innerHTML = shown.length ? groups.map(([o, list]) => `
+      <section class="doc-group">
+        <h3 class="group-title">${esc(o)} <small>(${num(list.length)})</small></h3>
+        <ul class="doc-list">${list.map((r) => {
+          const d = r.data;
+          const meta = [d.doc_no, d.effective_date && `มีผล ${when(d.effective_date, false)}`, d.revision && `ฉบับที่ ${d.revision}`, d.owner]
+            .filter(Boolean).map(esc).join(" · ");
+          return `<li class="doc-item">
+            <div class="doc-main">
+              <b>${esc(d.title)}</b>
+              ${meta ? `<small>${meta}</small>` : ""}
+              ${d.note ? `<small class="pre">${esc(d.note)}</small>` : ""}
+            </div>
+            <div class="doc-actions">
+              ${d.file ? `<button type="button" class="btn small primary" data-open-file="${Number(d.file.id)}">เปิด PDF</button>
+                <button type="button" class="btn small" data-open-file="${Number(d.file.id)}" data-download>ดาวน์โหลด</button>` : `<small>ยังไม่มีไฟล์</small>`}
+              ${canEdit(r) ? btn("edit", "แก้ไข", r.id) : ""}
+              ${me.role === "admin" ? btn("delete", "ลบ", r.id, "danger") : ""}
+            </div>
+          </li>`;
+        }).join("")}</ul>
+      </section>`).join("")
+      : `<p class="empty">${all.length ? "ไม่พบเอกสารที่ค้นหา" : 'ยังไม่มีเอกสาร กด "นำเข้า PDF" เพื่ออัปโหลดไฟล์ได้หลายไฟล์พร้อมกัน หรือกด "+ เพิ่มเอกสาร"'}</p>`;
+  };
+  $("#cat").onchange = draw;
+  $("#q").oninput = draw;
+  bind({
+    new: () => openRecordForm(m, null, { category: $("#cat").value || undefined }),
+    edit: (id) => openRecordForm(m, byId(id)),
+    delete: async (id) => {
+      if (!confirm(`ลบ "${byId(id).data.title}"? (ข้อมูลยังเก็บไว้ในประวัติ)`)) return;
+      try { await api("POST", `/records/${id}/delete`, {}); toast("ลบแล้ว"); refresh(); } catch (err) { toast(err.message, true); }
+    },
+    import: () => importPdfs(m),
   });
   draw();
 }

@@ -49,6 +49,10 @@ data/          ฐานข้อมูล SQLite ในเครื่อง �
 - `replace_by: "fiscal_year"` = นำเข้าแบบแทนที่ได้ (`replace` ใน body ของ /records/import, เฉพาะ admin) ลบแบบซ่อนรายการเดิมที่ค่าตรงกันก่อนนำเข้าในทรานแซกชันเดียว
 - `import: "generic"` = นำเข้า Excel แบบทั่วไป (`importGeneric`) จับคู่หัวตารางกับ `label` หรือ `aliases` ของช่อง `unique` = ช่องที่ใช้ข้ามรายการซ้ำ
 - `view: "directory"` = หน้าการ์ดรายบุคคล (ทำเนียบเภสัชกร) `count_unit` = หน่วยที่แสดงบนการ์ด Dashboard ของงานไม่มีวันที่
+- ช่อง `type: "file"` = ไฟล์แนบ PDF เก็บในตาราง `files` + `file_chunks` (base64 ส่วนละ 700,000 ไบต์ เพราะ D1 จำกัดขนาดแถว
+  และ MAX_BODY 1 MB) ข้อมูลในบันทึกเก็บ `{id, name, size}` เซิร์ฟเวอร์เติมให้ใน `resolve_files` / `withFiles`
+  หน้าเว็บอัปโหลดทีละส่วน (`uploadFile`) และประกอบไฟล์เองตอนเปิด (`openFile`) Worker ไม่ต้องแปลงข้อมูลไบนารี
+- `view: "documents"` = หน้าเอกสารแยกหมวด (แนวทางปฏิบัติด้านระบบยา) นำเข้า PDF หลายไฟล์ด้วย `importPdfs`
 - อ่าน .xlsx ในเบราว์เซอร์เอง (`readXlsx` แตก zip ด้วย `inflateRaw` ที่เขียนเอง) ไม่ใช้ไลบรารี ห้ามกลับไปใช้ DecompressionStream เพราะค้างเงียบใน Chrome บางเครื่อง และช่องเลือกไฟล์ (`pickFile`) ต้องแปะไว้ในหน้า การจับคู่คอลัมน์ Excel อยู่ที่ `mapOffhourSheets`
 
 ## รันและทดสอบ

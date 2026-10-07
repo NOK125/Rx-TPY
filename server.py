@@ -29,6 +29,8 @@ PORT = int(os.environ.get("PORT", "8100"))
 SESSION_HOURS = 12
 COOKIE_NAME = "rx_tpy_session"
 MAX_BODY = 1024 * 1024
+FILE_CHUNK = 700_000  # ไบต์ต่อส่วน (base64 แล้วยังไม่เกิน MAX_BODY)
+MAX_FILE = 20 * 1024 * 1024
 
 ROLES = {"admin": "ผู้ดูแลระบบ", "pharmacist": "เภสัชกร"}
 
@@ -73,6 +75,23 @@ CREATE TABLE IF NOT EXISTS record_log (
 CREATE INDEX IF NOT EXISTS idx_rec_module_date ON records(module, record_date);
 CREATE INDEX IF NOT EXISTS idx_rec_hn ON records(hn);
 CREATE INDEX IF NOT EXISTS idx_log_record ON record_log(record_id);
+-- ไฟล์แนบ (PDF) เก็บเป็น base64 แบ่งเป็นส่วน ๆ ละไม่เกิน FILE_CHUNK ไบต์ เพราะ D1 จำกัดขนาดต่อแถว
+CREATE TABLE IF NOT EXISTS files (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    chunks INTEGER NOT NULL,
+    complete INTEGER NOT NULL DEFAULT 0,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS file_chunks (
+    file_id INTEGER NOT NULL REFERENCES files(id),
+    n INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (file_id, n)
+);
 """
 
 # ---------- นิยามงานบริการ ----------
@@ -363,6 +382,14 @@ def clean_field(field, value):
         return to_num(value, label, required, field.get("min"), field.get("max"))
     if kind == "date":
         return to_date(value, label, required)
+    if kind == "file":
+        # เก็บแค่ id ไว้ก่อน resolve_files จะเติมชื่อและขนาดจากตาราง files
+        if value in (None, ""):
+            if required:
+                raise ApiError(400, f"กรุณาแนบ{label}")
+            return None
+        file_id = value.get("id") if isinstance(value, dict) else value
+        return {"id": int(to_num(file_id, label, True, 1))}
     if kind == "multi":
         values = value if isinstance(value, list) else ([] if value in (None, "") else [value])
         values = [str(v) for v in values]
@@ -394,6 +421,19 @@ def record_values(module, body):
         if value is not None:
             data[field["name"]] = value
     return record_date, hn, patient_name, data
+
+
+def resolve_files(conn, module, data):
+    """ตรวจว่าไฟล์แนบอัปโหลดครบแล้ว และเติมชื่อกับขนาดไฟล์"""
+    for field in module["fields"]:
+        if field["type"] != "file" or field["name"] not in data:
+            continue
+        row = conn.execute("SELECT id, name, size FROM files WHERE id = ? AND complete = 1",
+                           (data[field["name"]]["id"],)).fetchone()
+        if row is None:
+            raise ApiError(400, f"{field['label']}: ไม่พบไฟล์ที่อัปโหลด กรุณาเลือกไฟล์ใหม่")
+        data[field["name"]] = dict(row)
+    return data
 
 
 RECORD_SELECT = """
@@ -452,6 +492,7 @@ def get_record_endpoint(req, record_id):
 def create_record(req):
     module = get_module(req.body.get("module"))
     record_date, hn, patient_name, data = record_values(module, req.body)
+    resolve_files(req.conn, module, data)
     record_id = req.conn.execute(
         "INSERT INTO records (module, record_date, hn, patient_name, data, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (module["key"], record_date, hn, patient_name, json.dumps(data, ensure_ascii=False), req.user["id"], now())).lastrowid
@@ -476,6 +517,7 @@ def import_records(req):
             raise ApiError(400, f"แถวที่ {i}: ข้อมูลไม่ถูกต้อง")
         try:
             values.append(record_values(module, row))
+            resolve_files(req.conn, module, values[-1][3])
         except ApiError as err:
             raise ApiError(400, f"แถวที่ {row.get('_row', i)}: {err.message}")
     ts = now()
@@ -511,7 +553,9 @@ def can_edit(req, rec):
 def update_record(req, record_id):
     rec = get_record(req.conn, record_id)
     can_edit(req, rec)
-    record_date, hn, patient_name, data = record_values(get_module(rec["module"]), req.body)
+    module = get_module(rec["module"])
+    record_date, hn, patient_name, data = record_values(module, req.body)
+    resolve_files(req.conn, module, data)
     req.conn.execute(
         "UPDATE records SET record_date = ?, hn = ?, patient_name = ?, data = ?, updated_by = ?, updated_at = ? WHERE id = ?",
         (record_date, hn, patient_name, json.dumps(data, ensure_ascii=False), req.user["id"], now(), record_id))
@@ -535,6 +579,73 @@ def record_history(req, record_id):
     for entry in result:
         entry["snapshot"] = record_dict(json.loads(entry["snapshot"]))
     return result
+
+
+# ---------- ไฟล์แนบ ----------
+# อัปโหลด: POST /files (ชื่อ ขนาด) → POST /files/{id}/chunks (ทีละส่วน base64) → POST /files/{id}/finish
+# เปิดไฟล์: GET /files/{id} แล้ว GET /files/{id}/chunks/{n} ทีละส่วน หน้าเว็บประกอบไฟล์เอง
+
+BASE64 = re.compile(r"[A-Za-z0-9+/]*={0,2}")
+
+
+def get_file_row(conn, file_id):
+    row = conn.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
+    if row is None:
+        raise ApiError(404, "ไม่พบไฟล์นี้")
+    return dict(row)
+
+
+def create_file(req):
+    name = to_str(req.body.get("name"), "ชื่อไฟล์", True, 200)
+    if not name.lower().endswith(".pdf"):
+        raise ApiError(400, "รองรับเฉพาะไฟล์ PDF")
+    size = int(to_num(req.body.get("size"), "ขนาดไฟล์", True, 1, MAX_FILE))
+    chunks = math.ceil(size / FILE_CHUNK)
+    file_id = req.conn.execute(
+        "INSERT INTO files (name, mime, size, chunks, created_by, created_at) VALUES (?, 'application/pdf', ?, ?, ?, ?)",
+        (name, size, chunks, req.user["id"], now())).lastrowid
+    return {"id": file_id, "chunks": chunks, "chunk_size": FILE_CHUNK}
+
+
+def put_file_chunk(req, file_id):
+    f = get_file_row(req.conn, file_id)
+    if f["created_by"] != req.user["id"]:
+        raise ApiError(403, "อัปโหลดต่อได้เฉพาะผู้สร้างไฟล์")
+    if f["complete"]:
+        raise ApiError(409, "ไฟล์นี้อัปโหลดเสร็จแล้ว")
+    n = int(to_num(req.body.get("n"), "ลำดับส่วนของไฟล์", True, 0, f["chunks"] - 1))
+    data = req.body.get("data")
+    if not isinstance(data, str) or len(data) > math.ceil(FILE_CHUNK / 3) * 4 or not BASE64.fullmatch(data):
+        raise ApiError(400, "ข้อมูลไฟล์ไม่ถูกต้อง")
+    req.conn.execute("INSERT OR REPLACE INTO file_chunks (file_id, n, data) VALUES (?, ?, ?)", (file_id, n, data))
+    return {"ok": True}
+
+
+def finish_file(req, file_id):
+    f = get_file_row(req.conn, file_id)
+    if f["created_by"] != req.user["id"]:
+        raise ApiError(403, "อัปโหลดต่อได้เฉพาะผู้สร้างไฟล์")
+    count, size = req.conn.execute(
+        """SELECT COUNT(*), COALESCE(SUM(LENGTH(data) * 3 / 4 - (CASE WHEN data LIKE '%==' THEN 2 WHEN data LIKE '%=' THEN 1 ELSE 0 END)), 0)
+           FROM file_chunks WHERE file_id = ?""", (file_id,)).fetchone()
+    if count != f["chunks"] or size != f["size"]:
+        raise ApiError(400, "อัปโหลดไฟล์ไม่ครบ กรุณาลองใหม่")
+    req.conn.execute("UPDATE files SET complete = 1 WHERE id = ?", (file_id,))
+    return {"id": file_id, "name": f["name"], "size": f["size"]}
+
+
+def file_meta(req, file_id):
+    f = get_file_row(req.conn, file_id)
+    if not f["complete"]:
+        raise ApiError(404, "ไฟล์นี้อัปโหลดไม่สำเร็จ")
+    return {k: f[k] for k in ("id", "name", "mime", "size", "chunks")}
+
+
+def file_chunk(req, file_id, n):
+    row = req.conn.execute("SELECT data FROM file_chunks WHERE file_id = ? AND n = ?", (file_id, n)).fetchone()
+    if row is None:
+        raise ApiError(404, "ไม่พบข้อมูลไฟล์")
+    return {"data": row[0]}
 
 
 # ---------- ภาพรวม ----------
@@ -595,6 +706,11 @@ route("PUT", f"/records/{ID}", update_record)
 route("POST", f"/records/{ID}/delete", delete_record, "admin")
 route("GET", f"/records/{ID}/history", record_history)
 route("GET", "/summary", summary)
+route("POST", "/files", create_file)
+route("POST", f"/files/{ID}/chunks", put_file_chunk)
+route("POST", f"/files/{ID}/finish", finish_file)
+route("GET", f"/files/{ID}", file_meta)
+route("GET", f"/files/{ID}/chunks/{ID}", file_chunk)
 
 STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",

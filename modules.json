@@ -1,5 +1,26 @@
 [
  {
+  "key": "guidelines",
+  "group": "เอกสาร",
+  "title": "แนวทางปฏิบัติด้านระบบยา",
+  "view": "documents",
+  "no_date": true,
+  "unique": "title",
+  "count_unit": "เรื่อง",
+  "fields": [
+   {"name": "category", "label": "หมวดหมู่", "type": "select", "required": true, "options": ["นโยบาย", "แนวทางปฏิบัติ", "ระเบียบปฏิบัติ", "WI (วิธีปฏิบัติงาน)", "คู่มือ", "แบบฟอร์ม", "อื่น ๆ"]},
+   {"name": "title", "label": "ชื่อเอกสาร", "type": "text", "required": true},
+   {"name": "doc_no", "label": "เลขที่เอกสาร", "type": "text", "placeholder": "เช่น WI-PHA-001"},
+   {"name": "effective_date", "label": "วันที่มีผลบังคับใช้", "type": "date"},
+   {"name": "revision", "label": "ฉบับที่ / ครั้งที่แก้ไข", "type": "text"},
+   {"name": "owner", "label": "ผู้รับผิดชอบ", "type": "text"},
+   {"name": "file", "label": "ไฟล์ PDF", "type": "file", "accept": ".pdf"},
+   {"name": "note", "label": "หมายเหตุ", "type": "textarea"}
+  ],
+  "list": ["category", "title", "effective_date", "file"],
+  "stats": ["category"]
+ },
+ {
   "key": "adr",
   "group": "ความปลอดภัยด้านยา",
   "title": "แพ้ยา / ADR",

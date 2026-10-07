@@ -293,6 +293,21 @@ details summary { cursor: pointer; color: var(--primary); }
 .person-actions { display: flex; gap: .4rem; margin-top: auto; padding-top: .3rem; }
 .person-actions .btn + .btn { margin-left: 0; }
 
+/* เอกสาร PDF */
+.link-btn { border: 0; background: none; padding: 0; font: inherit; color: var(--primary); cursor: pointer; text-align: left; overflow-wrap: anywhere; }
+.link-btn:hover { text-decoration: underline; }
+.file-current { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; margin-bottom: .4rem; }
+.doc-group { margin-bottom: 1rem; }
+.doc-list { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.doc-item { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; padding: .7rem 1rem; border-bottom: 1px solid var(--border); }
+.doc-item:last-child { border-bottom: 0; }
+.doc-main { flex: 1 1 260px; min-width: 0; display: grid; gap: .1rem; }
+.doc-main b { overflow-wrap: anywhere; }
+.doc-actions { display: flex; flex-wrap: wrap; gap: .35rem; }
+.doc-actions .btn + .btn { margin-left: 0; }
+.pdf-import input:not([type="checkbox"]), .pdf-import select { min-width: 160px; }
+.pdf-import td { vertical-align: top; }
+
 /* สรุปรายเดือน */
 .group-title { font-size: .95rem; color: var(--muted); margin: 1.2rem 0 .5rem; }
 .stats-card { padding: .7rem 1rem; }
