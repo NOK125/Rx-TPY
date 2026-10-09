@@ -77,6 +77,10 @@ function bind(handlers) {
 const optionPairs = (opts) => opts.map((o) => (Array.isArray(o) ? o : [o, o]));
 
 function fieldHtml(f, values = {}) {
+  return (f.section ? `<h3 class="form-section full">${esc(f.section)}</h3>` : "") + fieldControl(f, values);
+}
+
+function fieldControl(f, values = {}) {
   const v = values[f.name] ?? f.value ?? "";
   const label = `${esc(f.label)}${f.unit ? ` <small>(${esc(f.unit)})</small>` : ""}${f.required ? " *" : ""}`;
   const hint = f.hint ? `<small>${esc(f.hint)}</small>` : "";
@@ -440,6 +444,7 @@ async function moduleView(m) {
   if (m.view === "formulary") return formularyView(m);
   if (m.view === "directory") return directoryView(m);
   if (m.view === "documents") return documentsView(m);
+  if (m.view === "stockcheck") return stockcheckView(m);
   view.innerHTML = `<div class="toolbar">
       <h2>${esc(m.title)}</h2>
       ${monthInput()}
@@ -717,7 +722,7 @@ function excelDate(value) {
   if (!m && (m = text.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/))) [d, mo, y] = [m[1], m[2], m[3]];
   if (!y) return null;
   y = Number(y);
-  if (y < 100) y += y > 50 ? 2400 : 2500;
+  if (y < 100) y += 2500; // ปีย่อ 2 หลักถือเป็น พ.ศ. 25xx เช่น 68 = 2568
   if (y > 2400) y -= 543;
   const iso = `${y}-${pad(mo)}-${pad(d)}`;
   const check = new Date(iso + "T00:00:00Z");
@@ -1949,6 +1954,246 @@ async function documentsView(m) {
       try { await api("POST", `/records/${id}/delete`, {}); toast("ลบแล้ว"); refresh(); } catch (err) { toast(err.message, true); }
     },
     import: () => importPdfs(m),
+  });
+  draw();
+}
+
+// ---------- ตรวจสอบ stock หน่วยบริการ (แบบตรวจ 1 = ผ่าน, 0 = ไม่ผ่าน, ว่าง = ไม่ประเมิน) ----------
+// 1 บันทึก = ผลตรวจ 1 หน่วยบริการใน 1 รอบ (วันที่ตรวจ) แสดงรวมเป็นตาราง ข้อตรวจ × หน่วยบริการ เหมือนใน Excel
+
+const criteriaOf = (m) => m.fields.filter((f) => f.criterion);
+
+function stockScore(m, d) {
+  const done = criteriaOf(m).filter((f) => d[f.name]);
+  return { pass: done.filter((f) => d[f.name] === "ผ่าน").length, total: done.length };
+}
+
+const unitOrder = (m) => (a, b) => {
+  const opts = fieldOf(m, "unit").options;
+  return opts.indexOf(a.data.unit) - opts.indexOf(b.data.unit);
+};
+
+// อ่านทุกชีตที่มีหัวตารางเป็นชื่อหน่วยบริการ ได้ 1 รอบการตรวจต่อชีต
+function parseStockSheets(m, sheets) {
+  const unitOpts = fieldOf(m, "unit").options;
+  const unitOf = (t) => unitOpts.find((u) => u.toUpperCase() === String(t).trim().toUpperCase());
+  const crit = criteriaOf(m);
+  const rounds = [];
+  const skipped = [];
+  for (const sheet of sheets) {
+    const rows = sheet.rows;
+    let h = -1;
+    let unitCols = [];
+    for (let i = 0; i < Math.min(rows.length, 15) && h < 0; i++) {
+      const cols = (rows[i] || []).map((c, j) => [j, unitOf(cellText(c))]).filter(([, u]) => u);
+      if (cols.length) { h = i; unitCols = cols; }
+    }
+    if (h < 0) continue;
+    // วันที่ตรวจ: ข้อความแบบ "วันที่ตรวจสอบ 21/10/68" หรือเซลล์วันที่ในแถวต้นตาราง
+    let date = null;
+    for (let i = 0; i <= h + 1 && !date; i++) {
+      for (const c of rows[i] || []) {
+        const text = cellText(c);
+        const found = text.match(/(\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4})/);
+        const d = found ? excelDate(found[1]) : typeof c === "number" ? excelDate(c) : null;
+        if (d) { date = fixYear(d, null); break; }
+      }
+    }
+    const values = Object.fromEntries(unitCols.map(([, u]) => [u, {}]));
+    for (let i = h + 1; i < rows.length; i++) {
+      const r = rows[i] || [];
+      const label = r.slice(0, unitCols[0][0]).map(cellText).find(Boolean) || "";
+      const no = label.match(/^(\d+)\s*\.\s*(\d+)/);
+      if (!no) continue;
+      const f = crit.find((x) => x.criterion === `${no[1]}.${no[2]}`);
+      if (!f) { skipped.push(`ชีต ${sheet.name}: ไม่รู้จักข้อ "${label.slice(0, 40)}"`); continue; }
+      for (const [j, u] of unitCols) {
+        const v = cellNum(r[j]);
+        if (v === 1) values[u][f.name] = "ผ่าน";
+        else if (v === 0) values[u][f.name] = "ไม่ผ่าน";
+      }
+    }
+    // หมายเหตุ: บรรทัด "Ward - ..." "ER - ..." แยกตามหน่วย บรรทัดที่ไม่มีชื่อหน่วยต่อท้ายหน่วยก่อนหน้า
+    const notes = Object.fromEntries(unitCols.map(([, u]) => [u, []]));
+    let noteCol = -1;
+    let noteRow = -1;
+    for (let i = 0; i <= h && noteCol < 0; i++) {
+      const j = (rows[i] || []).findIndex((c) => cellText(c).startsWith("หมายเหตุ"));
+      if (j >= 0) { noteCol = j; noteRow = i; }
+    }
+    if (noteCol >= 0) {
+      let last = null;
+      for (let i = noteRow + 1; i < rows.length; i++) {
+        for (const line of cellText((rows[i] || [])[noteCol]).split("\n")) {
+          const s = line.trim();
+          if (!s) continue;
+          const pre = s.match(/^([A-Za-z]+)\s*[-–:]\s*(.*)$/);
+          const u = pre && unitOf(pre[1]);
+          if (u && notes[u]) { notes[u].push(pre[2]); last = u; }
+          else if (last) notes[last].push(s);
+          else unitCols.forEach(([, uu]) => notes[uu].push(s));
+        }
+      }
+    }
+    const units = unitCols.map(([, u]) => u).filter((u) => Object.keys(values[u]).length || notes[u].length);
+    if (!units.length) { skipped.push(`ชีต ${sheet.name}: ไม่พบคะแนน`); continue; }
+    rounds.push({ sheet: sheet.name, date, units: units.map((u) => ({ unit: u, ...values[u], findings: notes[u].join("\n") })) });
+  }
+  return { rounds, skipped };
+}
+
+async function importStockCheck(m) {
+  const file = await pickFile(".xlsx,.csv");
+  if (!file) return;
+  let parsed;
+  let existing;
+  try {
+    [parsed, existing] = await Promise.all([readSpreadsheet(file).then((s) => parseStockSheets(m, s)), api("GET", `/records?module=${m.key}`)]);
+  } catch (err) {
+    return toast(err.message, true);
+  }
+  if (!parsed.rounds.length) return toast("ไม่พบตารางผลตรวจในไฟล์นี้ (ต้องมีหัวคอลัมน์ชื่อหน่วยบริการ เช่น WARD ER LR PCU)", true);
+  const have = new Set(existing.map((r) => `${r.record_date}|${r.data.unit}`));
+  dlg.className = "wide";
+  dlg.innerHTML = dialogShell("นำเข้าผลตรวจสอบ stock จาก Excel", `
+    <p class="hint">${esc(file.name)} · พบ ${num(parsed.rounds.length)} รอบการตรวจ ตรวจวันที่ก่อนกดนำเข้า หน่วยที่มีผลตรวจวันเดียวกันอยู่แล้วจะถูกข้าม</p>
+    <div class="table-wrap"><table><thead><tr><th>ชีต</th><th>วันที่ตรวจสอบ</th><th>หน่วยบริการ (คะแนน)</th></tr></thead><tbody>
+    ${parsed.rounds.map((r, i) => `<tr>
+      <td>${esc(r.sheet)}</td>
+      <td><input type="date" data-round-date="${i}" value="${esc(r.date || "")}" required aria-label="วันที่ตรวจสอบ"></td>
+      <td>${r.units.map((u) => { const s = stockScore(m, u); return `${esc(u.unit)} <b>${s.pass}/${s.total}</b>`; }).join(" · ")}
+        <div class="meta" data-dup="${i}"></div></td>
+    </tr>`).join("")}</tbody></table></div>
+    ${parsed.skipped.length ? `<details><summary>ดูรายการที่ข้าม</summary><ul class="history">${parsed.skipped.map((s) => `<li>${esc(s)}</li>`).join("")}</ul></details>` : ""}`,
+    "นำเข้า");
+  const form = $("form", dlg);
+  const plan = () => parsed.rounds.flatMap((r, i) => {
+    const date = form.querySelector(`[data-round-date="${i}"]`).value;
+    return r.units.filter((u) => !have.has(`${date}|${u.unit}`)).map((u) => ({ _row: `${r.sheet} ${u.unit}`, record_date: date, ...u }));
+  });
+  const update = () => {
+    parsed.rounds.forEach((r, i) => {
+      const date = form.querySelector(`[data-round-date="${i}"]`).value;
+      const dups = r.units.filter((u) => have.has(`${date}|${u.unit}`)).map((u) => u.unit);
+      form.querySelector(`[data-dup="${i}"]`).textContent = dups.length ? `มีผลตรวจวันนี้แล้ว (ข้าม): ${dups.join(", ")}` : "";
+    });
+    const n = plan().length;
+    $("button[type=submit]", form).textContent = n ? `นำเข้า ${num(n)} หน่วยบริการ` : "ไม่มีรายการใหม่";
+    $("button[type=submit]", form).disabled = !n;
+  };
+  form.oninput = update;
+  update();
+  wireDialog(async () => {
+    const rows = plan();
+    if (rows.some((r) => !r.record_date)) throw new Error("กรุณาใส่วันที่ตรวจสอบให้ครบทุกรอบ");
+    const res = await api("POST", "/records/import", { module: m.key, rows });
+    stockRound = rows[0].record_date;
+    toast(`นำเข้าแล้ว ${num(res.inserted)} หน่วยบริการ`);
+    refresh();
+  });
+}
+
+// Excel รูปแบบเดียวกับแบบตรวจต้นฉบับ 1 ชีตต่อ 1 รอบการตรวจ (นำกลับเข้าระบบได้)
+function stockWorkbook(m, all) {
+  const crit = criteriaOf(m);
+  const dates = [...new Set(all.map((r) => r.record_date))].sort();
+  return buildXlsx(dates.map((date) => {
+    const recs = all.filter((r) => r.record_date === date).sort(unitOrder(m));
+    const units = recs.map((r) => r.data.unit);
+    const noteCol = units.length + 1;
+    const rows = [
+      [`ตารางแสดงผลการตรวจสอบคุณภาพยา stock ที่จุดบริการ ปีงบประมาณ ${fiscalYear(date)}`],
+      [`วันที่ตรวจสอบ ${when(date, false)}`, "คะแนนที่ได้ในแต่ละหน่วยบริการ", ...Array(units.length - 1).fill(""), "หมายเหตุ"],
+      ["", ...units],
+    ];
+    const bold = new Set([0, 1, 2]);
+    for (const f of crit) {
+      if (f.section) { bold.add(rows.length); rows.push([f.section]); }
+      rows.push([f.label, ...recs.map((r) => (r.data[f.name] === "ผ่าน" ? 1 : r.data[f.name] === "ไม่ผ่าน" ? 0 : ""))]);
+    }
+    bold.add(rows.length);
+    rows.push(["คะแนนรวม", ...recs.map((r) => { const s = stockScore(m, r.data); return `${s.pass}/${s.total}`; })]);
+    // หมายเหตุใส่คอลัมน์ขวาสุด เริ่มที่แถวชื่อหน่วย
+    let line = 2;
+    for (const r of recs) {
+      for (const text of String(r.data.findings || "").split("\n").filter(Boolean)) {
+        rows[line][noteCol] = `${r.data.unit} - ${text}`;
+        line++;
+        if (!rows[line]) rows[line] = [];
+      }
+    }
+    return { name: when(date, false).replace(/\//g, "-"), widths: [46, ...units.map(() => 10), 50], bold, rows };
+  }));
+}
+
+let stockRound = null;
+
+async function stockcheckView(m) {
+  view.innerHTML = `<div class="toolbar">
+      <h2>${esc(m.title)}</h2>
+      <select id="round" aria-label="รอบการตรวจ"></select>
+      <button class="btn" data-act="import">นำเข้า Excel</button>
+      <button class="btn" data-act="xlsx">ดาวน์โหลด Excel</button>
+      <button class="btn primary" data-act="new">+ บันทึกผลตรวจ</button>
+    </div>
+    <div id="matrix"></div>
+    <div id="stock-summary"></div>`;
+  const all = await api("GET", `/records?module=${m.key}`);
+  const crit = criteriaOf(m);
+  const dates = [...new Set(all.map((r) => r.record_date))].sort().reverse();
+  if (!dates.includes(stockRound)) stockRound = dates[0] || null;
+  $("#round").innerHTML = dates.length
+    ? dates.map((d) => option(d, `ตรวจวันที่ ${when(d, false)} (${all.filter((r) => r.record_date === d).length} หน่วย)`, stockRound)).join("")
+    : option("", "ยังไม่มีผลตรวจ");
+  const draw = () => {
+    stockRound = $("#round").value || null;
+    const recs = all.filter((r) => r.record_date === stockRound).sort(unitOrder(m));
+    if (!recs.length) {
+      $("#matrix").innerHTML = `<p class="empty">ยังไม่มีผลตรวจ กด "นำเข้า Excel" เพื่อนำเข้าแบบตรวจ หรือกด "+ บันทึกผลตรวจ" เพื่อบันทึกทีละหน่วยบริการ</p>`;
+      $("#stock-summary").innerHTML = "";
+      return;
+    }
+    const mark = (v) => (v === "ผ่าน" ? `<td class="mk ok" title="ผ่าน">✓</td>` : v === "ไม่ผ่าน" ? `<td class="mk bad" title="ไม่ผ่าน">✗</td>`
+      : `<td class="mk na" title="ไม่ประเมิน">–</td>`);
+    const scores = recs.map((r) => stockScore(m, r.data));
+    $("#matrix").innerHTML = `<section class="card">
+      <h2>ผลการตรวจสอบคุณภาพยา stock ที่จุดบริการ <small>วันที่ตรวจสอบ ${when(stockRound, false)}</small></h2>
+      <div class="table-wrap"><table class="matrix"><thead><tr><th>ข้อตรวจ</th>${recs.map((r) =>
+        `<th class="mk"><button type="button" class="link-btn" data-act="open" data-id="${r.id}">${esc(r.data.unit)}</button></th>`).join("")}</tr></thead>
+      <tbody>${crit.map((f) => `${f.section ? `<tr class="sec"><td colspan="${recs.length + 1}">${esc(f.section)}</td></tr>` : ""}
+        <tr><td>${esc(f.label)}</td>${recs.map((r) => mark(r.data[f.name])).join("")}</tr>`).join("")}
+        <tr class="total"><td>คะแนนรวม</td>${scores.map((s) => `<td class="mk">${s.pass}/${s.total}${
+          s.total ? `<br><small>${Math.round(s.pass * 100 / s.total)}%</small>` : ""}</td>`).join("")}</tr>
+      </tbody></table></div>
+      ${recs.some((r) => r.data.findings || r.data.action) ? `<h3>หมายเหตุ</h3><ul class="notes">${recs.filter((r) => r.data.findings || r.data.action)
+        .map((r) => `<li><b>${esc(r.data.unit)}</b> <span class="pre">${esc(r.data.findings || "")}</span>${
+          r.data.action ? `<br><small>การแก้ไข: ${esc(r.data.action)}</small>` : ""}</li>`).join("")}</ul>` : ""}
+      <p class="meta">กดชื่อหน่วยบริการเพื่อดูหรือแก้ไขผลตรวจของหน่วยนั้น</p>
+    </section>`;
+    // สรุปทั้งปีงบประมาณของรอบที่เลือก
+    const fy = fiscalYear(stockRound);
+    const yearRecs = all.filter((r) => fiscalYear(r.record_date) === fy);
+    const units = fieldOf(m, "unit").options.filter((u) => yearRecs.some((r) => r.data.unit === u));
+    const byUnit = units.map((u) => {
+      const list = yearRecs.filter((r) => r.data.unit === u).map((r) => stockScore(m, r.data));
+      const pass = list.reduce((s, x) => s + x.pass, 0);
+      const total = list.reduce((s, x) => s + x.total, 0);
+      return { label: u, value: total ? pass * 100 / total : 0, text: total ? `${(pass * 100 / total).toFixed(1)}%` : "-", sub: `${pass}/${total} ข้อ · ${list.length} ครั้ง` };
+    });
+    const fails = crit.map((f) => ({ label: f.label, value: yearRecs.filter((r) => r.data[f.name] === "ไม่ผ่าน").length }))
+      .filter((x) => x.value).sort((a, b) => b.value - a.value).map((x) => ({ ...x, sub: "ครั้ง" }));
+    const roundCount = new Set(yearRecs.map((r) => r.record_date)).size;
+    $("#stock-summary").innerHTML = `<div class="grid2 analysis">
+      <section class="card"><h2>ร้อยละผ่านเกณฑ์ ปีงบประมาณ ${fy} <small>${num(roundCount)} รอบ</small></h2>${barList(byUnit)}</section>
+      <section class="card"><h2>ข้อที่ไม่ผ่านบ่อย ปีงบประมาณ ${fy}</h2>${barList(fails, "ผ่านทุกข้อ")}</section>
+    </div>`;
+  };
+  $("#round").onchange = draw;
+  bind({
+    new: () => openRecordForm(m, null, { record_date: isoDate() }),
+    open: (id) => openRecord(id),
+    import: () => importStockCheck(m),
+    xlsx: () => (all.length ? downloadBlob(stockWorkbook(m, all), `${m.title}.xlsx`) : toast("ยังไม่มีผลตรวจ", true)),
   });
   draw();
 }

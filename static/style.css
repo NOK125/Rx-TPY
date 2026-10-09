@@ -308,6 +308,17 @@ details summary { cursor: pointer; color: var(--primary); }
 .pdf-import input:not([type="checkbox"]), .pdf-import select { min-width: 160px; }
 .pdf-import td { vertical-align: top; }
 
+/* ตรวจสอบ stock: ตาราง ข้อตรวจ × หน่วยบริการ */
+.form-section { margin: .6rem 0 0; padding-top: .6rem; border-top: 1px solid var(--border); font-size: .95rem; color: var(--primary); }
+.matrix th.mk, .matrix td.mk { text-align: center; width: 5.5rem; }
+.matrix td.mk.ok { color: var(--ok); background: var(--ok-bg); font-weight: 700; }
+.matrix td.mk.bad { color: var(--bad); background: var(--bad-bg); font-weight: 700; }
+.matrix td.mk.na { color: var(--muted); background: var(--bg); }
+.matrix tr.sec td { background: var(--soft); color: var(--primary); font-weight: 600; }
+.matrix tr.total td { font-weight: 700; border-top: 2px solid var(--border); }
+.notes { margin: 0 0 .5rem; padding-left: 1.2rem; }
+.notes li { margin-bottom: .3rem; }
+
 /* สรุปรายเดือน */
 .group-title { font-size: .95rem; color: var(--muted); margin: 1.2rem 0 .5rem; }
 .stats-card { padding: .7rem 1rem; }
