@@ -445,6 +445,7 @@ async function moduleView(m) {
   if (m.view === "directory") return directoryView(m);
   if (m.view === "documents") return documentsView(m);
   if (m.view === "stockcheck") return stockcheckView(m);
+  if (m.view === "drugsafety") return drugsafetyView(m);
   view.innerHTML = `<div class="toolbar">
       <h2>${esc(m.title)}</h2>
       ${monthInput()}
@@ -1463,6 +1464,7 @@ async function formularyView(m) {
     <div id="formulary-summary"></div>
     <div class="list" id="list"></div>`;
   const all = await api("GET", `/records?module=${m.key}`);
+  const safety = await loadSafetyMap().catch(() => new Map());
   const thisFy = fiscalYear(isoDate());
   const years = [...new Set([...all.map((r) => Number(r.data.fiscal_year)), thisFy])].sort((a, b) => b - a);
   if (!years.includes(formularyFy)) formularyFy = all.some((r) => Number(r.data.fiscal_year) === thisFy) ? thisFy : years[0];
@@ -1501,7 +1503,7 @@ async function formularyView(m) {
     $("#list").innerHTML = table(
       [["ลำดับที่", "num"], "รายการยา", "ประเภท", [`ประมาณการจัดซื้อปีงบ ${fy} (บาท)`, "num"], "วิธีการจัดซื้อ", ""],
       [
-        ...shown.map((r) => [[num(r.data.seq), "num"], esc(r.data.drug), esc(r.data.category || "-"),
+        ...shown.map((r) => [[num(r.data.seq), "num"], `${esc(r.data.drug)} ${safetyFlags(safety.get(safetyKey(r.data.drug))?.data)}`, esc(r.data.category || "-"),
           [r.data.estimate == null ? "-" : baht(r.data.estimate), "num"], esc(r.data.method || "-"), actions(btn("open", "ดู", r.id))]),
         ...(shown.length ? [["", `<b>รวม ${num(shown.length)} รายการ</b>`, "", [`<b>${baht(total)}</b>`, "num"], "", ""]] : []),
       ],
@@ -2206,6 +2208,118 @@ async function stockcheckView(m) {
     open: (id) => openRecord(id),
     import: () => importStockCheck(m),
     xlsx: () => (all.length ? downloadBlob(stockWorkbook(m, all), `${m.title}.xlsx`) : toast("ยังไม่มีผลตรวจ", true)),
+  });
+  draw();
+}
+
+// ---------- ข้อมูลยาเพื่อความปลอดภัย (หญิงตั้งครรภ์ หญิงให้นมบุตร การป้องกันแสง) ----------
+// รายการยาตั้งต้นมาจากบัญชียาโรงพยาบาลปีงบล่าสุด ข้อมูลความปลอดภัยเภสัชกรเป็นผู้กรอก (ไม่เดาให้)
+
+const SAFETY_TONE = {
+  "ห้ามใช้": "bad",
+  "มีความเสี่ยงสูง ควรหลีกเลี่ยง": "warn",
+  "พิจารณาประโยชน์และความเสี่ยง": "info",
+  "ใช้ได้อย่างปลอดภัย": "ok",
+  "ต้องใส่ซองสีชา": "warn",
+  "ป้องกันแสง แต่มีแผงยา": "info",
+  "ไม่ต้องป้องกันแสง": "ok",
+};
+const safetyBadge = (v) => (v ? badge(v, SAFETY_TONE[v] || "muted") : `<span class="muted">ยังไม่มีข้อมูล</span>`);
+const safetyKey = (name) => String(name ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+
+const DRAFT = "ร่าง – รอเภสัชกรตรวจสอบ";
+const draftBadge = (d) => (d?.status === DRAFT ? ` ${badge("ร่าง รอตรวจสอบ", "warn")}` : "");
+
+const SAFETY_FILTERS = [
+  ["all", "ทั้งหมด", () => true],
+  ["preg", "🤰 ห้ามใช้ในหญิงตั้งครรภ์", (d) => d?.preg_level === "ห้ามใช้"],
+  ["lact", "🍼 ห้ามใช้ในหญิงให้นมบุตร", (d) => d?.lact_level === "ห้ามใช้"],
+  ["light", "🟫 ต้องใส่ซองสีชา", (d) => d?.light === "ต้องใส่ซองสีชา"],
+  ["draft", "⚠ ร่าง รอตรวจสอบ", (d) => d?.status === DRAFT],
+  ["missing", "ยังไม่มีข้อมูล", (d) => !d || (!d.preg_level && !d.lact_level && !d.light)],
+];
+
+// ป้ายเตือนสั้น ๆ ใช้ในหน้าบัญชียา
+function safetyFlags(d) {
+  if (!d) return "";
+  return [
+    d.preg_level === "ห้ามใช้" && badge("🤰 ห้ามใช้ตั้งครรภ์", "bad"),
+    d.lact_level === "ห้ามใช้" && badge("🍼 ห้ามใช้ให้นมบุตร", "bad"),
+    d.light === "ต้องใส่ซองสีชา" && badge("🟫 ซองสีชา", "warn"),
+  ].filter(Boolean).join(" ") + (d.preg_level === "ห้ามใช้" || d.lact_level === "ห้ามใช้" || d.light === "ต้องใส่ซองสีชา" ? draftBadge(d) : "");
+}
+
+async function loadSafetyMap() {
+  const list = await api("GET", "/records?module=drug_safety");
+  return new Map(list.map((r) => [safetyKey(r.data.drug), r]));
+}
+
+let safetyFilter = "all";
+
+async function drugsafetyView(m) {
+  view.innerHTML = `<div class="toolbar">
+      <h2>${esc(m.title)}</h2>
+      <input type="search" id="q" placeholder="ค้นหาชื่อยา">
+      <button class="btn" data-act="print">พิมพ์ / PDF</button>
+      <button class="btn" data-act="xlsx">ดาวน์โหลด Excel</button>
+      <button class="btn" data-act="import">นำเข้า Excel</button>
+      <button class="btn primary" data-act="new">+ เพิ่มยา</button>
+    </div>
+    <div class="chips-bar" id="filters"></div>
+    <div class="list" id="list"></div>`;
+  const [safety, formulary] = await Promise.all([api("GET", `/records?module=${m.key}`), api("GET", "/records?module=formulary")]);
+  // รายการยา = ยาในบัญชียาปีงบล่าสุด รวมกับยาที่มีข้อมูลความปลอดภัยแล้ว
+  const fy = Math.max(0, ...formulary.map((r) => Number(r.data.fiscal_year) || 0));
+  const byKey = new Map(safety.map((r) => [safetyKey(r.data.drug), r]));
+  const names = new Map();
+  for (const r of formulary.filter((x) => Number(x.data.fiscal_year) === fy)) names.set(safetyKey(r.data.drug), r.data.drug);
+  for (const r of safety) if (!names.has(safetyKey(r.data.drug))) names.set(safetyKey(r.data.drug), r.data.drug);
+  const rows = [...names].map(([key, name]) => ({ key, name, rec: byKey.get(key) || null }))
+    .sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+  let shown = [];
+  const draw = () => {
+    const test = SAFETY_FILTERS.find(([k]) => k === safetyFilter)?.[2] || (() => true);
+    const q = $("#q").value.trim().toLowerCase();
+    shown = rows.filter((r) => test(r.rec?.data) && (!q || r.key.includes(q)));
+    $("#filters").innerHTML = SAFETY_FILTERS.map(([k, label, t]) =>
+      `<button type="button" class="chip-btn${k === safetyFilter ? " on" : ""}" data-act="filter" data-id="${k}">${esc(label)} <b>${num(rows.filter((r) => t(r.rec?.data)).length)}</b></button>`).join("");
+    $("#list").innerHTML = table(
+      ["ชื่อยา", "หญิงตั้งครรภ์", "หญิงให้นมบุตร", "การป้องกันแสง", ""],
+      shown.map((r) => {
+        const d = r.rec?.data || {};
+        const canEdit = r.rec && (me.role === "admin" || r.rec.created_by === me.id);
+        return [esc(r.name) + draftBadge(d), safetyBadge(d.preg_level), safetyBadge(d.lact_level), safetyBadge(d.light),
+          actions(r.rec ? `${btn("open", "ดู", r.rec.id)}${canEdit ? btn("edit", "แก้ไข", r.rec.id) : ""}`
+            : btn("fill", "กรอกข้อมูล", r.key, "primary"))];
+      }),
+      q ? "ไม่พบยาที่ค้นหา" : rows.length ? "ไม่มียาในกลุ่มนี้" : 'ยังไม่มีรายการยา นำเข้าบัญชียาโรงพยาบาลก่อน หรือกด "+ เพิ่มยา"');
+  };
+  $("#q").oninput = draw;
+  const filterLabel = () => SAFETY_FILTERS.find(([k]) => k === safetyFilter)[1].replace(/^\S+\s/, "");
+  bind({
+    filter: (k) => { safetyFilter = k; draw(); },
+    fill: (key) => openRecordForm(m, null, { drug: names.get(key) }),
+    new: () => openRecordForm(m),
+    open: (id) => openRecord(id),
+    edit: (id) => openRecordForm(m, safety.find((r) => String(r.id) === String(id))),
+    import: () => importGeneric(m),
+    xlsx: () => downloadBlob(genericWorkbook(m, shown.map((r) => r.rec || { data: { drug: r.name } })),
+      `${m.title} - ${filterLabel()}.xlsx`),
+    print: () => {
+      $("#print").innerHTML = `<div class="report">
+        <div class="report-head"><img src="logo.png" alt="">
+          <div><h1>${esc(m.title)}: ${esc(filterLabel())}</h1>
+          <p>กลุ่มงานเภสัชกรรม โรงพยาบาลตาพระยา · ${num(shown.length)} รายการ · พิมพ์เมื่อ ${longDate()}</p></div></div>
+        <table><thead><tr><th>ชื่อยา</th><th>หญิงตั้งครรภ์</th><th>หญิงให้นมบุตร</th><th>การป้องกันแสง</th></tr></thead>
+        <tbody>${shown.map((r) => {
+          const d = r.rec?.data || {};
+          const cell = (level, note) => `${esc(level || "-")}${note ? `<br><small class="pre">${esc(note)}</small>` : ""}`;
+          return `<tr><td>${esc(r.name)}${d.status === DRAFT ? "<br><small>(ร่าง รอตรวจสอบ)</small>" : ""}</td><td>${cell(d.preg_level, d.preg_note)}</td>
+            <td>${cell(d.lact_level, [d.mp_ratio && `M/P ratio ${d.mp_ratio}`, d.lact_note].filter(Boolean).join("\n"))}</td>
+            <td>${esc(d.light || "-")}</td></tr>`;
+        }).join("")}</tbody></table></div>`;
+      window.print();
+    },
   });
   draw();
 }

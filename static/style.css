@@ -322,6 +322,16 @@ details summary { cursor: pointer; color: var(--primary); }
 .round-picker .btn + .btn { margin-left: 0; }
 .notes li { margin-bottom: .3rem; }
 
+/* ข้อมูลยาเพื่อความปลอดภัย: ปุ่มกรอง */
+.chips-bar { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .8rem; }
+.chip-btn {
+  font: inherit; font-size: .88rem; cursor: pointer; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 99px; padding: .3rem .8rem;
+}
+.chip-btn b { margin-left: .2rem; }
+.chip-btn:hover { border-color: var(--primary); }
+.chip-btn.on { background: var(--soft); border-color: var(--primary); color: var(--primary); font-weight: 600; }
+
 /* สรุปรายเดือน */
 .group-title { font-size: .95rem; color: var(--muted); margin: 1.2rem 0 .5rem; }
 .stats-card { padding: .7rem 1rem; }

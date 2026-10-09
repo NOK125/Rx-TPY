@@ -21,6 +21,31 @@
   "stats": ["category"]
  },
  {
+  "key": "drug_safety",
+  "group": "เอกสาร",
+  "title": "ข้อมูลยาเพื่อความปลอดภัย",
+  "view": "drugsafety",
+  "no_date": true,
+  "import": "generic",
+  "unique": "drug",
+  "count_unit": "รายการ",
+  "fields": [
+   {"name": "drug", "label": "ชื่อยา", "type": "text", "required": true, "aliases": ["รายการยา", "รายการ"]},
+   {"name": "preg_level", "label": "การใช้ในหญิงตั้งครรภ์", "type": "select", "options": ["ห้ามใช้", "มีความเสี่ยงสูง ควรหลีกเลี่ยง", "พิจารณาประโยชน์และความเสี่ยง", "ใช้ได้อย่างปลอดภัย"], "section": "หญิงตั้งครรภ์", "aliases": ["หญิงตั้งครรภ์", "ตั้งครรภ์"]},
+   {"name": "preg_note", "label": "ข้อมูลการใช้ในหญิงตั้งครรภ์", "type": "textarea"},
+   {"name": "lact_level", "label": "การใช้ในหญิงให้นมบุตร", "type": "select", "options": ["ห้ามใช้", "มีความเสี่ยงสูง ควรหลีกเลี่ยง", "พิจารณาประโยชน์และความเสี่ยง", "ใช้ได้อย่างปลอดภัย"], "section": "หญิงให้นมบุตร", "aliases": ["หญิงให้นมบุตร", "ให้นมบุตร"]},
+   {"name": "mp_ratio", "label": "M/P ratio", "type": "text"},
+   {"name": "lact_note", "label": "ข้อมูลการใช้ในหญิงให้นมบุตร", "type": "textarea"},
+   {"name": "light", "label": "การป้องกันแสง", "type": "select", "options": ["ต้องใส่ซองสีชา", "ป้องกันแสง แต่มีแผงยา", "ไม่ต้องป้องกันแสง"], "section": "การป้องกันแสง", "aliases": ["ซองสีชา", "ป้องกันแสง"]},
+   {"name": "reference", "label": "แหล่งอ้างอิง", "type": "text", "section": "การตรวจสอบข้อมูล"},
+   {"name": "status", "label": "สถานะข้อมูล", "type": "select", "options": ["ร่าง – รอเภสัชกรตรวจสอบ", "ตรวจสอบแล้ว"], "aliases": ["สถานะ"]},
+   {"name": "verified_by", "label": "ผู้ตรวจสอบ", "type": "staff"},
+   {"name": "note", "label": "หมายเหตุ", "type": "textarea"}
+  ],
+  "list": ["drug", "preg_level", "lact_level", "light"],
+  "stats": ["preg_level", "lact_level", "light"]
+ },
+ {
   "key": "adr",
   "group": "ความปลอดภัยด้านยา",
   "title": "แพ้ยา / ADR",
