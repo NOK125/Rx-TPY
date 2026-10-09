@@ -2131,7 +2131,6 @@ let stockRound = null;
 async function stockcheckView(m) {
   view.innerHTML = `<div class="toolbar">
       <h2>${esc(m.title)}</h2>
-      <select id="round" aria-label="รอบการตรวจ"></select>
       <button class="btn" data-act="import">นำเข้า Excel</button>
       <button class="btn" data-act="xlsx">ดาวน์โหลด Excel</button>
       <button class="btn primary" data-act="new">+ บันทึกผลตรวจ</button>
@@ -2142,11 +2141,9 @@ async function stockcheckView(m) {
   const crit = criteriaOf(m);
   const dates = [...new Set(all.map((r) => r.record_date))].sort().reverse();
   if (!dates.includes(stockRound)) stockRound = dates[0] || null;
-  $("#round").innerHTML = dates.length
-    ? dates.map((d) => option(d, `ตรวจวันที่ ${when(d, false)} (${all.filter((r) => r.record_date === d).length} หน่วย)`, stockRound)).join("")
-    : option("", "ยังไม่มีผลตรวจ");
+  const roundOptions = () => dates.map((d, i) => option(d,
+    `รอบที่ ${dates.length - i} · ${when(d, false)} (${all.filter((r) => r.record_date === d).length} หน่วย)`, stockRound)).join("");
   const draw = () => {
-    stockRound = $("#round").value || null;
     const recs = all.filter((r) => r.record_date === stockRound).sort(unitOrder(m));
     if (!recs.length) {
       $("#matrix").innerHTML = `<p class="empty">ยังไม่มีผลตรวจ กด "นำเข้า Excel" เพื่อนำเข้าแบบตรวจ หรือกด "+ บันทึกผลตรวจ" เพื่อบันทึกทีละหน่วยบริการ</p>`;
@@ -2157,7 +2154,16 @@ async function stockcheckView(m) {
       : `<td class="mk na" title="ไม่ประเมิน">–</td>`);
     const scores = recs.map((r) => stockScore(m, r.data));
     $("#matrix").innerHTML = `<section class="card">
-      <h2>ผลการตรวจสอบคุณภาพยา stock ที่จุดบริการ <small>วันที่ตรวจสอบ ${when(stockRound, false)}</small></h2>
+      <div class="panel-head">
+        <h2>ผลการตรวจสอบคุณภาพยา stock ที่จุดบริการ</h2>
+        <div class="round-picker">
+          <button type="button" class="btn small" data-act="older" ${dates.indexOf(stockRound) >= dates.length - 1 ? "disabled" : ""}
+            aria-label="รอบการตรวจก่อนหน้า">◀ รอบก่อน</button>
+          <select id="round" aria-label="รอบการตรวจ">${roundOptions()}</select>
+          <button type="button" class="btn small" data-act="newer" ${dates.indexOf(stockRound) <= 0 ? "disabled" : ""}
+            aria-label="รอบการตรวจถัดไป">รอบถัดไป ▶</button>
+        </div>
+      </div>
       <div class="table-wrap"><table class="matrix"><thead><tr><th>ข้อตรวจ</th>${recs.map((r) =>
         `<th class="mk"><button type="button" class="link-btn" data-act="open" data-id="${r.id}">${esc(r.data.unit)}</button></th>`).join("")}</tr></thead>
       <tbody>${crit.map((f) => `${f.section ? `<tr class="sec"><td colspan="${recs.length + 1}">${esc(f.section)}</td></tr>` : ""}
@@ -2187,9 +2193,15 @@ async function stockcheckView(m) {
       <section class="card"><h2>ร้อยละผ่านเกณฑ์ ปีงบประมาณ ${fy} <small>${num(roundCount)} รอบ</small></h2>${barList(byUnit)}</section>
       <section class="card"><h2>ข้อที่ไม่ผ่านบ่อย ปีงบประมาณ ${fy}</h2>${barList(fails, "ผ่านทุกข้อ")}</section>
     </div>`;
+    $("#round").onchange = () => { stockRound = $("#round").value; draw(); };
   };
-  $("#round").onchange = draw;
+  const step = (dir) => {
+    const i = dates.indexOf(stockRound) + dir;
+    if (i >= 0 && i < dates.length) { stockRound = dates[i]; draw(); }
+  };
   bind({
+    older: () => step(1),
+    newer: () => step(-1),
     new: () => openRecordForm(m, null, { record_date: isoDate() }),
     open: (id) => openRecord(id),
     import: () => importStockCheck(m),

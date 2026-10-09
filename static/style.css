@@ -317,6 +317,9 @@ details summary { cursor: pointer; color: var(--primary); }
 .matrix tr.sec td { background: var(--soft); color: var(--primary); font-weight: 600; }
 .matrix tr.total td { font-weight: 700; border-top: 2px solid var(--border); }
 .notes { margin: 0 0 .5rem; padding-left: 1.2rem; }
+.round-picker { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.round-picker select { width: auto; min-width: 0; flex: 1 1 14rem; }
+.round-picker .btn + .btn { margin-left: 0; }
 .notes li { margin-bottom: .3rem; }
 
 /* สรุปรายเดือน */
