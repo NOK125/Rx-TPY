@@ -229,7 +229,7 @@
  {
   "key": "stock_check",
   "group": "งานบริหาร",
-  "title": "ตรวจสอบ stock หน่วยบริการ",
+  "title": "รายงานตรวจสอบ stock หน่วยบริการ",
   "view": "stockcheck",
   "date_label": "วันที่ตรวจสอบ",
   "fields": [
