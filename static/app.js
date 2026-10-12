@@ -2488,7 +2488,16 @@ const ICONS = {
   stock_check: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
   purchase: '<path d="M3 4h2l2.5 11h11L21 7H6.2"/><circle cx="9" cy="19.5" r="1.3"/><circle cx="17" cy="19.5" r="1.3"/>',
   duty: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  guidelines: '<path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H19v15H5.5A1.5 1.5 0 0 0 4 19.5z"/><path d="M4 19.5A1.5 1.5 0 0 0 5.5 21H19v-3M8 7h7M8 10.5h5"/>',
+  drug_safety: '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M12 8.5v6M9 11.5h6"/>',
+  formulary: '<rect x="3.5" y="8" width="17" height="8" rx="4" transform="rotate(-45 12 12)"/><path d="M9.2 9.2l5.6 5.6"/>',
+  pharmacists: '<circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6M16 4.5a3.5 3.5 0 0 1 0 7M21 20c0-3-1.8-5.3-4.5-5.9"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
+  patient: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',
+  users: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',
 };
+const GROUP_TONE = { "เอกสาร": "g4", "ความปลอดภัยด้านยา": "g0", "งานบริการผู้ป่วย": "g1", "คลินิก": "g2", "งานบริหาร": "g3", "ตั้งค่า": "g5" };
+const toneOf = (group) => GROUP_TONE[group] || "g2";
 const icon = (key) => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[key] || ICONS.home}</svg>`;
 
 // ภาพขวดยา Rx แคปซูล และเม็ดยา สีมาจากตัวแปร CSS (--ill-*)
@@ -2542,8 +2551,8 @@ async function dashboardView() {
       ${pillArt("hero-art")}
     </section>
     <div class="toolbar"><h2>สรุปเดือน${monthLabel(s.month)}</h2>${monthInput()}</div>
-    ${groups.map(([g, mods], gi) => `<h3 class="group-title g${gi}"><i></i>${esc(g)}</h3>
-      <section class="mod-grid">${mods.map((m) => `<button type="button" class="mod-card g${gi}" data-act="go" data-id="${m.key}">
+    ${groups.map(([g, mods]) => `<h3 class="group-title ${toneOf(g)}"><i></i>${esc(g)}</h3>
+      <section class="mod-grid">${mods.map((m) => `<button type="button" class="mod-card ${toneOf(g)}" data-act="go" data-id="${m.key}">
         <span class="mod-icon">${icon(m.key)}</span>
         <span><b>${num((m.no_date ? s.totals?.[m.key] : s.counts[m.key]) || 0)}</b><span>${esc(m.title)}${
           m.no_date ? ` <small>(${esc(m.count_unit || "รายการ")})</small>` : ""}</span></span></button>`).join("")}</section>`).join("")}
@@ -2683,20 +2692,29 @@ async function show(tab) {
   let group = null;
   for (const [key, v] of Object.entries(VIEWS)) {
     if (!allowed(key) || v.hidden) continue;
-    if (v.group && v.group !== group) { group = v.group; html += `<div class="nav-group">${esc(group)}</div>`; }
-    html += `<button type="button" data-tab="${key}" ${key === tab ? 'aria-current="page"' : ""}>${esc(v.title)}</button>`;
+    if (v.group && v.group !== group) { group = v.group; html += `<div class="nav-group ${toneOf(group)}"><i></i>${esc(group)}</div>`; }
+    html += `<button type="button" class="${v.group ? toneOf(v.group) : "g2"}" data-tab="${key}" ${key === tab ? 'aria-current="page"' : ""}>${esc(v.title)}</button>`;
   }
   $("#tabs").innerHTML = html;
   try {
     await VIEWS[tab].render();
+    decorateTitle();
   } catch (e) {
     if (me) view.innerHTML = `<p class="form-error">โหลดข้อมูลไม่สำเร็จ: ${esc(e.message)}</p>`;
   }
 }
 
 // โหลดหน้าปัจจุบันใหม่โดยไม่ปิดกล่องข้อความที่เปิดอยู่
+// ใส่ไอคอนสีประจำกลุ่มหน้าชื่อหน้า (ทำหลังวาดหน้าทุกครั้ง)
+function decorateTitle() {
+  const h = $("#view > .toolbar h2");
+  if (!h || h.querySelector(".title-icon") || current === "home") return;
+  const tone = VIEWS[current]?.group ? toneOf(VIEWS[current].group) : "g2";
+  h.insertAdjacentHTML("afterbegin", `<span class="title-icon ${tone}">${icon(current)}</span>`);
+}
+
 function refresh() {
-  if (current && me) VIEWS[current].render().catch((e) => toast(e.message, true));
+  if (current && me) VIEWS[current].render().then(decorateTitle).catch((e) => toast(e.message, true));
 }
 
 async function startApp() {
