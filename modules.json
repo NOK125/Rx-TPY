@@ -70,7 +70,7 @@
  {
   "key": "med_error",
   "group": "ความปลอดภัยด้านยา",
-  "title": "ผลการรายงานความเสี่ยง (Risk Management)",
+  "title": "รายงานความเสี่ยง (Risk Management)",
   "patient": true,
   "patient_optional": true,
   "date_label": "วันที่เกิดเหตุ",
