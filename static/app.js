@@ -1290,16 +1290,10 @@ async function offhourPanel(month) {
   if (!rows.length) {
     const all = await api("GET", "/records?module=offhour_rx");
     if (!all.length) return;
-    const latest = all.reduce((a, r) => (r.record_date > a ? r.record_date : a), "").slice(0, 7);
+    const latest = all.reduce((a, r) => (r.record_date.slice(0, 7) <= month && r.record_date > a ? r.record_date : a), "").slice(0, 7);
+    if (!latest) return;
     rows = all.filter((r) => r.record_date.startsWith(latest));
     label = `${monthLabel(latest)} (ข้อมูลล่าสุด)`;
-    if (!box.isConnected) return;
-    // การ์ดด้านบนก็แสดงจำนวนของเดือนล่าสุดแทน 0 พร้อมบอกเดือน
-    const card = $('.mod-card[data-id="offhour_rx"]');
-    if (card) {
-      card.querySelector("b").textContent = num(rows.length);
-      card.querySelector("b + span").insertAdjacentHTML("beforeend", ` <small>(เวร · ${esc(monthLabel(latest))})</small>`);
-    }
   }
   if (!box.isConnected) return;
   const s = offhourStats(rows);
@@ -2546,6 +2540,19 @@ function greeting(d = new Date()) {
 
 // ---------- หน้าแรก ----------
 
+// ตัวเลขบนการ์ดงาน: งานไม่มีวันที่นับทั้งหมด งานอื่นนับเดือนที่เลือก
+// ถ้าเดือนที่เลือกยังไม่มีข้อมูล แสดงเดือนล่าสุดที่มีข้อมูลแทน พร้อมบอกเดือน
+function modCardText(m, s) {
+  let n = m.no_date ? s.totals?.[m.key] : s.counts[m.key];
+  let note = m.no_date ? `(${m.count_unit || "รายการ"})` : "";
+  const last = s.latest?.[m.key];
+  if (!m.no_date && !n && last) {
+    n = last.n;
+    note = `(ข้อมูลล่าสุด ${monthLabel(last.month)})`;
+  }
+  return `<span><b>${num(n || 0)}</b><span>${esc(m.title)}${note ? ` <small>${esc(note)}</small>` : ""}</span></span>`;
+}
+
 async function dashboardView() {
   const s = await api("GET", `/summary${currentMonth ? "?month=" + currentMonth : ""}`);
   const groups = [];
@@ -2570,8 +2577,7 @@ async function dashboardView() {
     ${groups.map(([g, mods]) => `<h3 class="group-title ${toneOf(g)}"><i></i>${esc(g)}</h3>
       <section class="mod-grid">${mods.map((m) => `<button type="button" class="mod-card ${toneOf(g)}" data-act="go" data-id="${m.key}">
         <span class="mod-icon">${icon(m.key)}</span>
-        <span><b>${num((m.no_date ? s.totals?.[m.key] : s.counts[m.key]) || 0)}</b><span>${esc(m.title)}${
-          m.no_date ? ` <small>(${esc(m.count_unit || "รายการ")})</small>` : ""}</span></span></button>`).join("")}</section>`).join("")}
+        ${modCardText(m, s)}</button>`).join("")}</section>`).join("")}
     <section class="card offhour-panel" id="offhour-panel" hidden></section>
     <div class="grid2">
       <section class="card"><h2>เวรวันนี้ <small>${when(s.today, false)}</small></h2>

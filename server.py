@@ -650,6 +650,12 @@ def file_chunk(req, file_id, n):
 
 # ---------- ภาพรวม ----------
 
+LATEST_SQL = """WITH lm AS (SELECT module, MAX(substr(record_date, 1, 7)) AS m FROM records
+                            WHERE deleted_at IS NULL AND substr(record_date, 1, 7) <= ? GROUP BY module)
+    SELECT r.module, lm.m, COUNT(*) FROM records r JOIN lm ON r.module = lm.module AND substr(r.record_date, 1, 7) = lm.m
+    WHERE r.deleted_at IS NULL GROUP BY r.module"""
+
+
 def summary(req):
     today = date.today()
     month = req.q("month") if re.fullmatch(r"\d{4}-\d{2}", req.q("month")) else today.isoformat()[:7]
@@ -672,7 +678,9 @@ def summary(req):
     totals = {r[0]: r[1] for r in conn.execute(
         f"SELECT module, COUNT(*) FROM records WHERE deleted_at IS NULL AND module IN ({','.join('?' * len(no_date))}) GROUP BY module",
         no_date)} if no_date else {}
-    return {"month": month, "today": today.isoformat(), "counts": counts, "totals": totals,
+    # เดือนล่าสุดที่มีข้อมูล (ไม่เกินเดือนที่เลือก) ของแต่ละงาน ใช้แสดงบนการ์ดเมื่อเดือนที่เลือกยังไม่มีข้อมูล
+    latest = {r[0]: {"month": r[1], "n": r[2]} for r in conn.execute(LATEST_SQL, (month,))}
+    return {"month": month, "today": today.isoformat(), "counts": counts, "totals": totals, "latest": latest,
             "appointments": appointments, "duty_today": duty_today}
 
 

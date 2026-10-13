@@ -620,7 +620,7 @@ async function summary(req) {
   const db = req.db;
   // งานที่ไม่มีวันที่ (เช่น บัญชียา) นับทั้งหมดแทนการนับรายเดือน
   const noDate = MODULES.filter((m) => m.no_date).map((m) => m.key);
-  const [counts, appointments, duty, totals] = await db.batch([
+  const [counts, appointments, duty, totals, latest] = await db.batch([
     db.prepare("SELECT module, COUNT(*) AS n FROM records WHERE deleted_at IS NULL AND record_date LIKE ? GROUP BY module")
       .bind(month + "-%"),
     // นัดหมายจากบันทึกล่าสุดของผู้ป่วยแต่ละคนในแต่ละคลินิก: ขาดนัดไม่เกิน 30 วัน และนัดใน 14 วันข้างหน้า
@@ -631,12 +631,19 @@ async function summary(req) {
     db.prepare(RECORD_SELECT + " WHERE r.module = 'duty' AND r.deleted_at IS NULL AND r.record_date = ? ORDER BY r.id").bind(day),
     db.prepare(`SELECT module, COUNT(*) AS n FROM records WHERE deleted_at IS NULL
       AND module IN (SELECT value FROM json_each(?)) GROUP BY module`).bind(JSON.stringify(noDate)),
+    // เดือนล่าสุดที่มีข้อมูล (ไม่เกินเดือนที่เลือก) ของแต่ละงาน ใช้แสดงบนการ์ดเมื่อเดือนที่เลือกยังไม่มีข้อมูล
+    db.prepare(`WITH lm AS (SELECT module, MAX(substr(record_date, 1, 7)) AS m FROM records
+                            WHERE deleted_at IS NULL AND substr(record_date, 1, 7) <= ? GROUP BY module)
+      SELECT r.module, lm.m AS month, COUNT(*) AS n FROM records r
+      JOIN lm ON r.module = lm.module AND substr(r.record_date, 1, 7) = lm.m
+      WHERE r.deleted_at IS NULL GROUP BY r.module`).bind(month),
   ]);
   return {
     month,
     today: day,
     counts: Object.fromEntries(counts.results.map((r) => [r.module, r.n])),
     totals: Object.fromEntries(totals.results.map((r) => [r.module, r.n])),
+    latest: Object.fromEntries(latest.results.map((r) => [r.module, { month: r.month, n: r.n }])),
     appointments: appointments.results.map(recordDict),
     duty_today: duty.results.map(recordDict),
   };
