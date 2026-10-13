@@ -2558,7 +2558,7 @@ async function dashboardView() {
       <div class="hero-text">
         <p class="hero-kicker">${longDate()}</p>
         <h1>${greeting()}, ${esc(me.full_name)}</h1>
-        <p>งานบริการเภสัชกรรม โรงพยาบาลตาพระยา</p>
+        <p>งานเภสัชกรรมฯ โรงพยาบาลตาพระยา</p>
         <form class="hero-search" id="search-form">
           <input type="search" name="q" required placeholder="ค้นหาในระบบ เช่น HN ชื่อผู้ป่วย ชื่อยา" aria-label="ค้นหา" autocomplete="off">
           <button class="btn">ค้นหา</button>
@@ -2635,7 +2635,7 @@ function authScreen(setupMode) {
         <img src="logo.png" alt="โรงพยาบาลตาพระยา" width="640" height="270">
         ${pillArt("auth-art")}
       </div>
-      <p class="auth-title">Rx-TPY · งานบริการเภสัชกรรม</p>
+      <p class="auth-title">Rx-TPY · งานเภสัชกรรมฯ</p>
       <h2>${setupMode ? "ตั้งค่าระบบครั้งแรก" : "เข้าสู่ระบบ"}</h2>
       ${setupMode ? `<p class="hint">สร้างบัญชีผู้ดูแลระบบคนแรก จากนั้นเพิ่มบัญชีเภสัชกรได้ในเมนู "ผู้ใช้"</p>` : ""}
       <div class="fields">
