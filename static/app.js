@@ -1284,10 +1284,19 @@ function offhourDownloadPdf(s, periodLabel) {
 async function offhourPanel(month) {
   const box = $("#offhour-panel");
   if (!MOD.offhour_rx || !box) return;
-  const rows = await api("GET", `/records?module=offhour_rx&month=${month}`);
-  if (!rows.length || !box.isConnected) return;
+  let rows = await api("GET", `/records?module=offhour_rx&month=${month}`);
+  let label = monthLabel(month);
+  // เดือนที่เลือกยังไม่มีข้อมูล (เช่น ยังไม่ได้นำเข้าเดือนนี้) ให้แสดงเดือนล่าสุดที่มีข้อมูลแทน
+  if (!rows.length) {
+    const all = await api("GET", "/records?module=offhour_rx");
+    if (!all.length) return;
+    const latest = all.reduce((a, r) => (r.record_date > a ? r.record_date : a), "").slice(0, 7);
+    rows = all.filter((r) => r.record_date.startsWith(latest));
+    label = `${monthLabel(latest)} (ข้อมูลล่าสุด)`;
+  }
+  if (!box.isConnected) return;
   const s = offhourStats(rows);
-  box.innerHTML = `<div class="panel-head"><h2>${esc(MOD.offhour_rx.title)} <small>${monthLabel(month)}</small></h2>
+  box.innerHTML = `<div class="panel-head"><h2>${esc(MOD.offhour_rx.title)} <small>${esc(label)}</small></h2>
       ${btn("go", "ดูการวิเคราะห์ทั้งหมด", "offhour_rx")}</div>
     <section class="kpis">
       ${kpi("ใบสั่งยาที่คัดกรอง", num(s.all.screened), "ใบ")}
