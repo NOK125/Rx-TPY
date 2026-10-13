@@ -1280,37 +1280,6 @@ function offhourDownloadPdf(s, periodLabel) {
   });
 }
 
-// สรุปย่อในหน้า Dashboard
-async function offhourPanel(month) {
-  const box = $("#offhour-panel");
-  if (!MOD.offhour_rx || !box) return;
-  let rows = await api("GET", `/records?module=offhour_rx&month=${month}`);
-  let label = monthLabel(month);
-  // เดือนที่เลือกยังไม่มีข้อมูล (เช่น ยังไม่ได้นำเข้าเดือนนี้) ให้แสดงเดือนล่าสุดที่มีข้อมูลแทน
-  if (!rows.length) {
-    const all = await api("GET", "/records?module=offhour_rx");
-    if (!all.length) return;
-    const latest = all.reduce((a, r) => (r.record_date.slice(0, 7) <= month && r.record_date > a ? r.record_date : a), "").slice(0, 7);
-    if (!latest) return;
-    rows = all.filter((r) => r.record_date.startsWith(latest));
-    label = `${monthLabel(latest)} (ข้อมูลล่าสุด)`;
-  }
-  if (!box.isConnected) return;
-  const s = offhourStats(rows);
-  box.innerHTML = `<div class="panel-head"><h2>${esc(MOD.offhour_rx.title)} <small>${esc(label)}</small></h2>
-      ${btn("go", "ดูการวิเคราะห์ทั้งหมด", "offhour_rx")}</div>
-    <section class="kpis">
-      ${kpi("ใบสั่งยาที่คัดกรอง", num(s.all.screened), "ใบ")}
-      ${kpi("ร้อยละของความคลาดเคลื่อน", pct(s.all.errors, s.all.screened), `${num(s.all.errors)} ใบ`)}
-      ${kpi("เวรที่พบ DRP", num(s.all.drp), `จาก ${num(s.all.shifts)} เวร`)}
-    </section>
-    <div class="grid2 analysis">
-      <div><h3>ประเภท DRP</h3>${barList(s.drp.slice(0, 5).map(([k, c]) => ({ label: k, value: c, sub: "ครั้ง" })), "ไม่พบ DRP")}</div>
-      <div><h3>ยาที่เกิด DRP</h3>${barList(s.drugs.slice(0, 5).map(([k, c]) => ({ label: titleCase(k), value: c, sub: "ครั้ง" })), "ยังไม่มีข้อมูลยา")}</div>
-    </div>`;
-  box.hidden = false;
-}
-
 // ---------- บัญชียาโรงพยาบาล ----------
 // แยกตามปีงบประมาณ (ช่อง fiscal_year) นำเข้าจากไฟล์แผนจัดซื้อยา โดยหาคอลัมน์จากชื่อหัวตาราง
 
@@ -2578,7 +2547,6 @@ async function dashboardView() {
       <section class="mod-grid">${mods.map((m) => `<button type="button" class="mod-card ${toneOf(g)}" data-act="go" data-id="${m.key}">
         <span class="mod-icon">${icon(m.key)}</span>
         ${modCardText(m, s)}</button>`).join("")}</section>`).join("")}
-    <section class="card offhour-panel" id="offhour-panel" hidden></section>
     <div class="grid2">
       <section class="card"><h2>เวรวันนี้ <small>${when(s.today, false)}</small></h2>
         ${table(["เวร", "เภสัชกร", "หมายเหตุ"], s.duty_today.map((r) =>
@@ -2594,7 +2562,6 @@ async function dashboardView() {
   $("#search-form").onsubmit = (e) => { e.preventDefault(); openSearch(e.target.q.value.trim()); };
   wireMonth(dashboardView);
   bind({ go: (key) => show(key), open: (id) => openRecord(id) });
-  offhourPanel(s.month).catch(() => {});
 }
 
 // ---------- ผู้ใช้ (ผู้ดูแลระบบ) ----------

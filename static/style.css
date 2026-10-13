@@ -315,8 +315,6 @@ td .btn { vertical-align: middle; }
 .col-label { font-size: .72rem; color: var(--muted); margin-top: .3rem; padding-top: .25rem; border-top: 1px solid var(--border); width: 100%; text-align: center; white-space: nowrap; }
 .panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .8rem; }
 .panel-head h2 { margin: 0; }
-.offhour-panel { margin-top: 1.2rem; }
-.offhour-panel .kpi { background: var(--bg); }
 details { margin: .6rem 0; }
 details summary { cursor: pointer; color: var(--primary); }
 
