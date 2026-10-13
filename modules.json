@@ -111,6 +111,29 @@
   "rate": {"label": "ร้อยละของความคลาดเคลื่อน", "num": "error_rx", "den": "total_rx"}
  },
  {
+  "key": "stock_check",
+  "group": "ความปลอดภัยด้านยา",
+  "title": "รายงานตรวจสอบ stock หน่วยบริการ",
+  "view": "stockcheck",
+  "date_label": "วันที่ตรวจสอบ",
+  "fields": [
+   {"name": "unit", "label": "หน่วยบริการ", "type": "select", "required": true, "options": ["WARD", "ER", "LR", "PCU", "OPD", "อื่น ๆ"]},
+   {"name": "c1_1", "label": "1.1 การบันทึกอุณหภูมิสม่ำเสมอ", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "1.1", "section": "1. การควบคุมคุณภาพยาเย็น/วัคซีน"},
+   {"name": "c1_2", "label": "1.2 การบันทึกอุณหภูมิเป็นปัจจุบัน", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "1.2"},
+   {"name": "c1_3", "label": "1.3 ตรวจไม่พบรายการยา/เวชภัณฑ์หมดอายุ", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "1.3"},
+   {"name": "c1_4", "label": "1.4 ไม่พบสิ่งอื่นใดนอกจากยา/เวชภัณฑ์", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "1.4"},
+   {"name": "c2_1", "label": "2.1 ไม่พบร่องรอยการเปิดใช้งาน", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "2.1", "section": "2. การตรวจสอบ ER/CPR/STAT/Refer/EMS box"},
+   {"name": "c2_2", "label": "2.2 กล่องยาอยู่ในลักษณะพร้อมใช้งาน", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "2.2"},
+   {"name": "c3_1", "label": "3.1 ไม่พบรายการยาห้าม stock", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "3.1", "section": "3. ระบบยา Floor stock"},
+   {"name": "c3_2", "label": "3.2 จำนวน stock มีปริมาณที่เหมาะสม", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "3.2"},
+   {"name": "c3_3", "label": "3.3 เวชภัณฑ์ยาอยู่พื้นที่จัดเก็บที่เหมาะสม", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "3.3"},
+   {"name": "findings", "label": "หมายเหตุ / สิ่งที่พบ", "type": "textarea", "section": "สรุปผล"},
+   {"name": "action", "label": "การแก้ไข", "type": "textarea"}
+  ],
+  "list": ["unit", "findings"],
+  "stats": ["unit"]
+ },
+ {
   "key": "counsel",
   "group": "งานบริการผู้ป่วย",
   "title": "ให้คำปรึกษาด้านยา",
@@ -250,29 +273,6 @@
   ],
   "list": ["position", "start_year", "license", "phone"],
   "stats": ["position", "status"]
- },
- {
-  "key": "stock_check",
-  "group": "งานบริหาร",
-  "title": "รายงานตรวจสอบ stock หน่วยบริการ",
-  "view": "stockcheck",
-  "date_label": "วันที่ตรวจสอบ",
-  "fields": [
-   {"name": "unit", "label": "หน่วยบริการ", "type": "select", "required": true, "options": ["WARD", "ER", "LR", "PCU", "OPD", "อื่น ๆ"]},
-   {"name": "c1_1", "label": "1.1 การบันทึกอุณหภูมิสม่ำเสมอ", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "1.1", "section": "1. การควบคุมคุณภาพยาเย็น/วัคซีน"},
-   {"name": "c1_2", "label": "1.2 การบันทึกอุณหภูมิเป็นปัจจุบัน", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "1.2"},
-   {"name": "c1_3", "label": "1.3 ตรวจไม่พบรายการยา/เวชภัณฑ์หมดอายุ", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "1.3"},
-   {"name": "c1_4", "label": "1.4 ไม่พบสิ่งอื่นใดนอกจากยา/เวชภัณฑ์", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "1.4"},
-   {"name": "c2_1", "label": "2.1 ไม่พบร่องรอยการเปิดใช้งาน", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "2.1", "section": "2. การตรวจสอบ ER/CPR/STAT/Refer/EMS box"},
-   {"name": "c2_2", "label": "2.2 กล่องยาอยู่ในลักษณะพร้อมใช้งาน", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "2.2"},
-   {"name": "c3_1", "label": "3.1 ไม่พบรายการยาห้าม stock", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "3.1", "section": "3. ระบบยา Floor stock"},
-   {"name": "c3_2", "label": "3.2 จำนวน stock มีปริมาณที่เหมาะสม", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "3.2"},
-   {"name": "c3_3", "label": "3.3 เวชภัณฑ์ยาอยู่พื้นที่จัดเก็บที่เหมาะสม", "type": "select", "options": ["ผ่าน", "ไม่ผ่าน"], "criterion": "3.3"},
-   {"name": "findings", "label": "หมายเหตุ / สิ่งที่พบ", "type": "textarea", "section": "สรุปผล"},
-   {"name": "action", "label": "การแก้ไข", "type": "textarea"}
-  ],
-  "list": ["unit", "findings"],
-  "stats": ["unit"]
  },
  {
   "key": "purchase",
