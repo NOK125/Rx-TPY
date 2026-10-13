@@ -1293,6 +1293,13 @@ async function offhourPanel(month) {
     const latest = all.reduce((a, r) => (r.record_date > a ? r.record_date : a), "").slice(0, 7);
     rows = all.filter((r) => r.record_date.startsWith(latest));
     label = `${monthLabel(latest)} (ข้อมูลล่าสุด)`;
+    if (!box.isConnected) return;
+    // การ์ดด้านบนก็แสดงจำนวนของเดือนล่าสุดแทน 0 พร้อมบอกเดือน
+    const card = $('.mod-card[data-id="offhour_rx"]');
+    if (card) {
+      card.querySelector("b").textContent = num(rows.length);
+      card.querySelector("b + span").insertAdjacentHTML("beforeend", ` <small>(เวร · ${esc(monthLabel(latest))})</small>`);
+    }
   }
   if (!box.isConnected) return;
   const s = offhourStats(rows);
