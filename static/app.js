@@ -110,7 +110,7 @@ function fieldControl(f, values = {}) {
   ].join(" ");
   let input;
   if (f.type === "textarea") {
-    input = `<textarea rows="3" ${attrs}>${esc(v)}</textarea>`;
+    input = `<textarea rows="${Number(f.rows) || 3}" ${attrs}>${esc(v)}</textarea>`;
   } else if (f.type === "select" || f.type === "staff") {
     let opts = f.type === "staff" ? [...STAFF] : f.options;
     if (f.type === "staff" && v && !opts.includes(v)) opts.push(v);
@@ -257,6 +257,14 @@ async function lookupHN(form) {
   box.hidden = false;
 }
 
+// ตรวจค่าในฟอร์มเพิ่มเติมเฉพาะงาน (นอกจากที่เซิร์ฟเวอร์ตรวจ) คืนข้อความผิดพลาด หรือค่าว่างถ้าผ่าน
+const FORM_CHECKS = {
+  renal_drugs: (body) => {
+    const { bands, errors } = parseBands(body.bands);
+    return errors[0] || (bands.length ? "" : "กรุณาใส่ช่วงค่าการทำงานของไตอย่างน้อย 1 ช่วง");
+  },
+};
+
 function openRecordForm(m, rec = null, preset = {}) {
   const fields = allFields(m);
   const form = openForm({
@@ -268,6 +276,8 @@ function openRecordForm(m, rec = null, preset = {}) {
     submitLabel: "บันทึก",
     onSubmit: async (_, f) => {
       const body = { module: m.key, ...formValues(f, fields) };
+      const problem = FORM_CHECKS[m.key]?.(body);
+      if (problem) throw new Error(problem);
       // อัปโหลดไฟล์ที่เลือกใหม่ก่อน แล้วส่ง id ไฟล์ไปกับบันทึก
       for (const field of fields.filter((x) => x.type === "file")) {
         const file = f.querySelector(`[name="${field.name}__upload"]`)?.files[0];
@@ -446,6 +456,7 @@ async function moduleView(m) {
   if (m.view === "documents") return documentsView(m);
   if (m.view === "stockcheck") return stockcheckView(m);
   if (m.view === "drugsafety") return drugsafetyView(m);
+  if (m.view === "renal") return renalView(m);
   view.innerHTML = `<div class="toolbar">
       <h2>${esc(m.title)}</h2>
       ${monthInput()}
@@ -2303,6 +2314,687 @@ async function drugsafetyView(m) {
   draw();
 }
 
+// ---------- การใช้ยาในผู้ป่วยที่มีภาวะไตบกพร่อง ----------
+// ตารางยา (งาน renal_drugs): 1 บันทึกต่อยา 1 ตัว ช่วงค่าไตเก็บในช่อง bands บรรทัดละช่วง เช่น "10-30: 250 mg q 12 hr"
+// ตรวจรายการสั่งยาในเบราว์เซอร์ ข้อมูลผู้ป่วยไม่ถูกบันทึกจนกว่าจะกด "บันทึกผล" (บันทึกเฉพาะผลที่ไม่เหมาะสม/ควรทบทวน)
+
+const RENAL_LEVEL = { avoid: ["ห้ามใช้/ไม่แนะนำ", "bad"], caution: ["ไม่ควรเริ่มยา", "warn"], adjust: ["ปรับขนาดยา", "info"], ok: ["ไม่ต้องปรับขนาด", "ok"] };
+const RENAL_STATUS = { bad: ["ไม่เหมาะสม", "bad"], review: ["ควรทบทวน", "warn"], ok: ["เหมาะสม", "ok"], none: ["ไม่อยู่ในตาราง", "muted"] };
+const RENAL_N = String.raw`\d[\d,]*(?:\.\d+)?`;
+const PER_DAY = { od: 1, qd: 1, hs: 1, daily: 1, once: 1, bid: 2, tid: 3, qid: 4 };
+const round3 = (x) => Math.round(x * 1000) / 1000;
+const renalNum = (s) => {
+  const t = String(s ?? "").replace(/,/g, "").trim();
+  return t !== "" && Number.isFinite(Number(t)) ? Number(t) : null;
+};
+const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// ข้อความคำแนะนำ → ระดับ และตัวเลขที่ตรวจอัตโนมัติได้ (ขนาดสูงสุด/วัน, จำนวนครั้งสูงสุด/วัน, mg/kg ต่อครั้ง)
+function renalRule(text) {
+  const t = String(text ?? "").replace(/\s+/g, " ").trim();
+  const low = t.toLowerCase();
+  const level = /ห้ามใช้|ไม่แนะนำให้ใช้/.test(t) ? "avoid" : /ไม่แนะนำให้เริ่ม|ไม่ควรเริ่ม/.test(t) ? "caution"
+    : /ไม่จำเป็นต้องปรับ/.test(t) ? "ok" : "adjust";
+  const rule = { level, maxDailyMg: null, maxPerDay: null, maxMgKg: null, partial: t.includes("%") };
+  const unit = (u) => (u === "g" ? 1000 : 1);
+  const N = RENAL_N;
+  let m = low.match(/(\d+)(?:\s*-\s*\d+)?\s*(?:hrs?|h|ชม|ชั่วโมง)(?![a-z])/);
+  if (m && Number(m[1]) > 0) rule.maxPerDay = round3(24 / Number(m[1]));
+  m = low.match(/(?<![a-z])(od|bid|tid|qid)(?![a-z])/);
+  if (m) rule.maxPerDay = PER_DAY[m[1]];
+  m = t.match(/(\d+)(?:\s*-\s*(\d+))?\s*ครั้ง\s*\/\s*สัปดาห์/);
+  if (m) rule.maxPerDay = round3(Number(m[2] || m[1]) / 7);
+  const mk = low.match(new RegExp(`(${N})(?:\\s*[-–]\\s*(${N}))?\\s*mg\\s*/\\s*kg`));
+  if (mk) {
+    rule.maxMgKg = renalNum(mk[2] || mk[1]);
+  } else if (!low.includes("loading") && !t.replace("ไม่แนะนำให้เริ่มยา", "").includes("เริ่มยา")) {
+    // ขนาดยาเริ่มต้น และ loading dose ไม่ใช่ขนาดสูงสุด จึงไม่ตรวจ
+    const md = low.match(new RegExp(`(${N})(?:\\s*[-–]\\s*(${N}))?\\s*(mg|g)\\s*/\\s*(?:day|วัน)`));
+    const mq = low.match(new RegExp(`(${N})(?:\\s*[-–]\\s*(${N}))?\\s*(mg|g)\\s*(?:iv\\s*)?(?:q|ทุก)\\s*(\\d+)(?:\\s*-\\s*\\d+)?\\s*(?:hrs?|h|ชม)`));
+    const mf = low.match(new RegExp(`(${N})(?:\\s*[-–]\\s*(${N}))?\\s*(mg|g)\\s*(?:iv\\s*)?(od|bid|tid|qid)(?![a-z])`));
+    if (md) rule.maxDailyMg = renalNum(md[2] || md[1]) * unit(md[3]);
+    else if (mq) rule.maxDailyMg = round2(renalNum(mq[2] || mq[1]) * unit(mq[3]) * 24 / Number(mq[4]));
+    else if (mf) rule.maxDailyMg = renalNum(mf[2] || mf[1]) * unit(mf[3]) * PER_DAY[mf[4]];
+  }
+  const mx = low.match(new RegExp(`maximum\\s*:?\\s*(${N})\\s*(mg|g)\\s*/\\s*(?:day|วัน)`));
+  if (mx) rule.maxDailyMg = renalNum(mx[1]) * unit(mx[2]);
+  if (level === "adjust" && rule.maxDailyMg == null && rule.maxPerDay == null && rule.maxMgKg == null) rule.partial = true;
+  return rule;
+}
+
+// "10-30" "<10" ">=30" "≥30" → [ต่ำสุด, สูงสุด] สูงสุด null = ไม่จำกัด
+function renalRange(text) {
+  const t = String(text ?? "").replace(/[–—]/g, "-").replace(/\s+/g, "").replace("≥", ">").replace("≤", "<");
+  let m;
+  if ((m = t.match(/^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)$/))) return [Number(m[1]), Number(m[2])];
+  if ((m = t.match(/^<=?(\d+(?:\.\d+)?)$/))) return [0, Number(m[1])];
+  if ((m = t.match(/^>=?(\d+(?:\.\d+)?)$/))) return [Number(m[1]), null];
+  return null;
+}
+const rangeLabel = (lo, hi) => (hi == null ? `≥${lo}` : !lo ? `<${hi}` : `${lo}-${hi}`);
+
+// ช่อง bands → ช่วงที่เรียงแล้ว ช่วง a-b หมายถึง a ≤ ค่าไต < b ช่องว่างระหว่างช่วง (เช่น 10-29 กับ 30-49) นับรวมกับช่วงล่าง
+function parseBands(text) {
+  const bands = [];
+  const errors = [];
+  String(text ?? "").split(/\r?\n/).forEach((raw, i) => {
+    const line = raw.trim();
+    if (!line) return;
+    const m = line.match(/^([^:：]+)[:：]\s*(.+)$/);
+    const range = m && renalRange(m[1]);
+    if (!range) return errors.push(`บรรทัด ${i + 1} "${line}": ต้องขึ้นต้นด้วยช่วงค่าไต แล้วตามด้วย : เช่น 10-30: ...`);
+    if (range[1] != null && range[1] <= range[0]) return errors.push(`บรรทัด ${i + 1}: ค่าสูงสุดของช่วงต้องมากกว่าค่าต่ำสุด`);
+    bands.push({ min: range[0], max: range[1], range, label: m[1].trim(), text: m[2].trim(), ...renalRule(m[2]) });
+  });
+  bands.sort((a, b) => a.min - b.min);
+  for (let i = 0; i + 1 < bands.length; i++) {
+    const [a, b] = [bands[i], bands[i + 1]];
+    if (a.max == null || a.max > b.min) errors.push(`ช่วง ${a.label} ซ้อนกับช่วง ${b.label}`);
+    else a.max = b.min;
+  }
+  return { bands, errors };
+}
+
+const renalDrugList = (recs) => recs.map((r) => ({
+  rec: r, name: r.data.drug, aliases: r.data.aliases || "", measure: r.data.measure || "CrCl",
+  draft: r.data.status !== "ตรวจสอบแล้ว", ...parseBands(r.data.bands),
+})).sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+
+// ความถี่หรือวิธีใช้ → [ครั้งต่อวัน, จำนวนต่อครั้ง]
+function renalFreq(text) {
+  const t = String(text ?? "").toLowerCase().replace(/×/g, "x").replace(/\*/g, "x");
+  let perDose = null;
+  let m;
+  if ((m = t.match(/(\d+(?:\.\d+)?)\s*x\s*(\d+)/))) return [Number(m[2]), Number(m[1])];
+  if ((m = t.match(/ครั้งละ\s*(\d+(?:\.\d+)?)/))) perDose = Number(m[1]);
+  if ((m = t.match(/(\d+(?:\.\d+)?)\s*(?:เม็ด|แคปซูล|tab|cap)/))) perDose ??= Number(m[1]);
+  if ((m = t.match(/วันละ\s*(\d+(?:\.\d+)?)\s*ครั้ง|(\d+(?:\.\d+)?)\s*ครั้ง\s*(?:\/|ต่อ)\s*วัน/))) return [Number(m[1] || m[2]), perDose];
+  if ((m = t.match(/สัปดาห์ละ\s*(\d+)\s*ครั้ง|(\d+)\s*ครั้ง\s*(?:\/|ต่อ)\s*สัปดาห์/))) return [round3(Number(m[1] || m[2]) / 7), perDose];
+  if ((m = t.match(/(?:q|ทุก)\s*(\d+(?:\.\d+)?)\s*(?:hrs?|h|ชม|ชั่วโมง)/))) return [round3(24 / Number(m[1])), perDose];
+  if ((m = t.match(/(?<![a-z])(od|bid|tid|qid|hs|qd|daily|once)(?![a-z])/))) return [PER_DAY[m[1]], perDose];
+  if (t.replace(/\s/g, "").includes("เช้าเย็น") || t.includes("เช้า-เย็น")) return [2, perDose];
+  if (/^\s*\d+(?:\.\d+)?\s*$/.test(t)) return [Number(t), perDose];
+  return [null, perDose];
+}
+
+// "500 mg" "1 g" "875/125 mg" "300" → mg
+function renalMg(text) {
+  const t = String(text ?? "").toLowerCase().replace(/,/g, "");
+  const m = t.match(/(\d+(?:\.\d+)?)(?:\s*\/\s*\d+(?:\.\d+)?)?\s*(mg|g|mcg)(?![a-z])/);
+  if (m) return Number(m[1]) * { mg: 1, g: 1000, mcg: 0.001 }[m[2]];
+  return /^\s*\d+(?:\.\d+)?\s*$/.test(t) ? Number(t) : null;
+}
+
+const RENAL_FORM_WORDS = new Set(["tablet", "tablets", "tab", "capsule", "capsules", "cap", "injection", "inj", "sodium",
+  "sulfate", "sulphate", "hydrochloride", "hcl", "and", "with"]);
+const RENAL_INJ = /(?<![a-z])(inj|injection|iv|im|vial|amp|ampoule)(?![a-z])|ฉีด/;
+const RENAL_TOPICAL = /(?<![a-z])(cream|ointment|oint|gel|lotion|eye|ear|drops?|ophthalmic|topical|patch|spray|inhaler)(?![a-z])|ทา|หยอด/;
+
+// จับคู่ชื่อยาที่สั่งกับตาราง: ทุกคำหลักของชื่อในตารางต้องอยู่ในชื่อที่สั่ง (เทียบ 7 ตัวอักษรแรก เช่น clavulanate/clavulanic)
+// หรือตรงกับชื่ออื่น และรูปแบบยา (ฉีด/กิน) ต้องตรงกัน ยาใช้ภายนอกไม่ตรวจ
+function renalMatch(drugs, name) {
+  const low = String(name ?? "").toLowerCase();
+  if (!low.trim() || RENAL_TOPICAL.test(low)) return null;
+  const tokens = low.split(/[^a-z0-9ก-๙]+/).filter(Boolean);
+  const inj = RENAL_INJ.test(low);
+  let best = null;
+  let score = 0;
+  for (const d of drugs) {
+    const dn = d.name.toLowerCase();
+    if (RENAL_INJ.test(dn) !== inj && /tablet|capsule|tab|cap|injection|inj/.test(dn)) continue;
+    const aliases = [...d.aliases.split(/[,;\n]/), ...[...d.name.matchAll(/\(([^)]+)\)/g)].map((x) => x[1])]
+      .map((a) => a.trim().toLowerCase()).filter(Boolean);
+    const words = (dn.replace(/\([^)]*\)/g, " ").match(/[a-z]{3,}/g) || []).filter((w) => !RENAL_FORM_WORDS.has(w));
+    const has = (w) => tokens.some((t) => (w.length > 7 ? t.startsWith(w.slice(0, 7)) : t === w));
+    let s = words.length && words.every(has) ? 10 * words.length : 0;
+    if (aliases.some((a) => new RegExp(`(?<![a-z0-9ก-๙])${reEscape(a)}(?![a-z0-9ก-๙])`).test(low))) s = s ? s + 1 : 5;
+    if (s > score) [best, score] = [d, s];
+  }
+  return best;
+}
+
+// Cockcroft-Gault: CrCl = (140 - อายุ) × น้ำหนัก / (72 × SCr) × 0.85 ถ้าเป็นหญิง
+function cockcroftGault(age, weight, scr, sex) {
+  if (!(age > 0 && weight > 0 && scr > 0)) return null;
+  const female = /^(หญิง|ญ|f|female|2|w)$/i.test(String(sex ?? "").trim());
+  return Math.round((140 - age) * weight / (72 * scr) * (female ? 0.85 : 1) * 10) / 10;
+}
+
+// ตรวจ 1 รายการสั่งยา status: bad = ไม่เหมาะสม, review = ควรทบทวน, ok = เหมาะสม, none = ไม่อยู่ในตาราง
+function renalCheck(drugs, p) {
+  const res = renalCheckCore(drugs, p);
+  if (res.draft) res.reasons.push("ข้อมูลยานี้ในตารางยังเป็นร่าง รอเภสัชกรตรวจสอบ");
+  return res;
+}
+
+function renalCheckCore(drugs, p) {
+  const res = { ...p, status: "none", reasons: [], matched: null, draft: false, renal: null, renalLabel: "", band: "",
+    level: null, doseMg: null, perDay: null, dailyMg: null };
+  const d = renalMatch(drugs, p.drug);
+  if (!d) return res;
+  Object.assign(res, { matched: d.name, draft: d.draft });
+  const calc = cockcroftGault(renalNum(p.age), renalNum(p.weight), renalNum(p.scr), p.sex);
+  let order = [["CrCl", renalNum(p.crcl), "CrCl"], ["CrCl", calc, "CrCl (คำนวณจาก SCr)"], ["eGFR", renalNum(p.egfr), "eGFR"]];
+  if (d.measure === "eGFR") order = [order[2], order[0], order[1]];
+  const pick = order.find(([, v]) => v != null);
+  if (!pick) {
+    res.status = "review";
+    res.reasons.unshift("ไม่มีค่าการทำงานของไต (CrCl, eGFR หรือ SCr + อายุ + น้ำหนัก + เพศ)");
+    return res;
+  }
+  const [kind, value, label] = pick;
+  Object.assign(res, { renal: value, renalLabel: label });
+  if (kind !== d.measure) res.reasons.push(`ตารางใช้ ${d.measure} แต่ไม่มีค่านี้ จึงใช้ ${label} แทน`);
+  if (label.includes("คำนวณ") && !String(p.sex ?? "").trim()) res.reasons.push("ไม่ระบุเพศ คำนวณ CrCl แบบเพศชาย");
+  const band = d.bands.find((b) => b.min <= value && (b.max == null || value < b.max));
+  if (!band) {
+    if (d.bands.length && value < d.bands[0].min) {
+      res.status = "review";
+      res.reasons.unshift(`ตารางไม่มีคำแนะนำเมื่อ ${d.measure} ต่ำกว่า ${d.bands[0].min}`);
+    } else {
+      res.status = "ok";
+      res.reasons.unshift("ค่าการทำงานของไตอยู่นอกช่วงที่ต้องปรับขนาดยา");
+    }
+    return res;
+  }
+  Object.assign(res, { band: `${d.measure} ${band.label}: ${band.text}`, level: band.level });
+  let [perDay, perDose] = p.freq ? renalFreq(p.freq) : [null, null];
+  if (p.sig) {
+    const [pd2, dose2] = renalFreq(p.sig);
+    perDay ??= pd2;
+    perDose ??= dose2;
+  }
+  const qty = renalNum(p.qty) ?? perDose;
+  let dose = renalMg(p.dose);
+  if (dose == null) {
+    const strength = renalMg(p.drug);
+    dose = strength != null ? strength * (qty || 1) : null;
+  }
+  Object.assign(res, { doseMg: dose, perDay, dailyMg: dose != null && perDay != null ? round2(dose * perDay) : null });
+  const bad = [];
+  const missing = [];
+  if (band.level === "avoid") bad.push(`ไม่แนะนำ/ห้ามใช้เมื่อ ${label} ${num(value)}`);
+  if (band.maxDailyMg != null) {
+    if (res.dailyMg == null) missing.push("ขนาดยาต่อวัน");
+    else if (res.dailyMg > band.maxDailyMg * 1.001) bad.push(`ขนาดยา ${num(res.dailyMg)} mg/วัน เกินที่แนะนำ ${num(band.maxDailyMg)} mg/วัน`);
+  }
+  if (band.maxPerDay != null) {
+    if (perDay == null) missing.push("ความถี่");
+    else if (perDay > band.maxPerDay * 1.001) bad.push(`ให้ยาวันละ ${num(perDay)} ครั้ง ถี่กว่าที่แนะนำ (ไม่เกิน ${num(band.maxPerDay)} ครั้ง/วัน)`);
+  }
+  if (band.maxMgKg != null) {
+    const w = renalNum(p.weight);
+    if (dose == null || !w) missing.push("ขนาดยาต่อครั้งและน้ำหนัก");
+    else if (dose > band.maxMgKg * w * 1.001) bad.push(`ขนาดยา ${num(dose)} mg/ครั้ง เกิน ${num(band.maxMgKg)} mg/kg (${num(band.maxMgKg * w)} mg)`);
+  }
+  if (bad.length) {
+    res.status = "bad";
+    res.reasons.unshift(...bad);
+  } else if (band.level === "ok") {
+    res.status = "ok";
+  } else if (band.level === "caution" || band.partial || missing.length) {
+    res.status = "review";
+    if (missing.length) res.reasons.unshift(`ตรวจอัตโนมัติไม่ได้ ขาดข้อมูล: ${missing.join(", ")}`);
+    res.reasons.unshift(`ตรวจสอบตามคำแนะนำ: ${band.text}`);
+  } else {
+    res.status = "ok";
+  }
+  return res;
+}
+
+// ---------- อ่านไฟล์รายการสั่งยาผู้ป่วย ----------
+
+const renalHead = (s) => String(s ?? "").toLowerCase().replace(/[\s*_\-().:/]/g, "");
+const RENAL_ORDER_COLUMNS = {
+  hn: ["hn", "เลขhn", "เลขที่ผู้ป่วย", "หมายเลขผู้ป่วย", "an", "vn"],
+  name: ["ชื่อผู้ป่วย", "ชื่อสกุล", "ชื่อนามสกุล", "ชื่อสกุลผู้ป่วย", "patientname", "ผู้ป่วย"],
+  date: ["วันที่", "วันที่สั่ง", "วันที่สั่งยา", "date", "orderdate"],
+  drug: ["ชื่อยา", "รายการยา", "ยา", "drug", "drugname", "ชื่อยาที่สั่ง", "ยาที่สั่ง"],
+  dose: ["ขนาดยาต่อครั้งmg", "ขนาดยาmg", "ขนาดยาต่อครั้ง", "ขนาดยา", "dose", "dosemg"],
+  qty: ["จำนวนต่อครั้ง", "เม็ดต่อครั้ง", "จำนวนเม็ดต่อครั้ง", "qtyperdose"],
+  freq: ["ความถี่", "ครั้งต่อวัน", "ความถี่ต่อวัน", "frequency", "freq"],
+  sig: ["วิธีใช้", "วิธีใช้ยา", "sig", "usage", "drugusage"],
+  crcl: ["crcl", "crclmlmin", "creatinineclearance"],
+  egfr: ["egfr", "egfrmlmin173m2", "gfr"],
+  scr: ["scr", "creatinine", "serumcreatinine", "cr", "ครีเอตินิน"],
+  age: ["อายุ", "อายุปี", "age"],
+  weight: ["น้ำหนัก", "น้ำหนักkg", "bw", "weight", "weightkg"],
+  sex: ["เพศ", "sex", "gender"],
+};
+
+// หาแถวหัวตาราง: จับคู่ชื่อคอลัมน์แบบตรงทั้งคำก่อน แล้วค่อยแบบขึ้นต้นด้วยชื่อ
+function findHeader(sheets, columns, ok) {
+  for (const sheet of sheets) {
+    for (let h = 0; h < Math.min(sheet.rows.length, 15); h++) {
+      const head = (sheet.rows[h] || []).map(renalHead);
+      const cols = {};
+      const used = new Set();
+      for (const exact of [true, false]) {
+        for (const [key, names] of Object.entries(columns)) {
+          if (key in cols) continue;
+          const i = head.findIndex((c, idx) => c && !used.has(idx) && names.some((n) => (exact ? c === n : n.length >= 3 && c.startsWith(n))));
+          if (i >= 0) { cols[key] = i; used.add(i); }
+        }
+      }
+      if (ok(cols)) return { sheet, head: h, cols };
+    }
+  }
+  return null;
+}
+
+function renalOrderRows(target) {
+  const { sheet, head, cols } = target;
+  const rows = [];
+  for (let i = head + 1; i < sheet.rows.length; i++) {
+    const c = sheet.rows[i] || [];
+    const r = { _row: i + 1 };
+    for (const [k, j] of Object.entries(cols)) {
+      const text = cellText(c[j]);
+      if (!text) continue;
+      const d = k === "date" ? excelDate(c[j]) : null;
+      r[k] = k === "date" ? (d ? fixYear(d, null) : "") : text;
+    }
+    if (r.drug) rows.push(r);
+  }
+  // ค่าไต อายุ น้ำหนัก เพศ ชื่อ ที่ว่าง ใช้ค่าจากแถวบนของผู้ป่วย (HN) เดียวกัน
+  const last = {};
+  for (const r of rows) {
+    if (!r.hn) continue;
+    const prev = (last[r.hn] ??= {});
+    for (const k of ["name", "crcl", "egfr", "scr", "age", "weight", "sex", "date"]) {
+      if (r[k]) prev[k] = r[k];
+      else if (prev[k]) r[k] = prev[k];
+    }
+  }
+  return rows;
+}
+
+// ---------- หน้าจอ ----------
+
+let renalTab = "check";
+let renalResults = null; // ผลตรวจล่าสุด เก็บในหน่วยความจำเท่านั้น
+let renalSource = "";
+let renalFilter = "flag";
+let renalDrugQuery = "";
+
+const RENAL_FILTERS = [
+  ["flag", "ต้องแจ้งเตือน", (r) => r.status === "bad" || r.status === "review"],
+  ["bad", "ไม่เหมาะสม", (r) => r.status === "bad"],
+  ["review", "ควรทบทวน", (r) => r.status === "review"],
+  ["ok", "เหมาะสม", (r) => r.status === "ok"],
+  ["none", "ไม่อยู่ในตาราง", (r) => r.status === "none"],
+  ["all", "ทั้งหมด", () => true],
+];
+const renalValueText = (r) => (r.renal != null ? `${r.renalLabel} ${num(r.renal)}` : "");
+const renalDoseText = (r) => [
+  r.doseMg != null && `${num(r.doseMg)} mg/ครั้ง`,
+  r.perDay != null && `${num(r.perDay)} ครั้ง/วัน`,
+  r.dailyMg != null && `รวม ${num(r.dailyMg)} mg/วัน`,
+].filter(Boolean).join(" · ") || [r.dose, r.freq, r.sig].filter(Boolean).join(" ");
+
+async function renalView(m) {
+  const recs = await api("GET", "/records?module=renal_drugs");
+  const drugs = renalDrugList(recs);
+  const tabs = [["check", "ตรวจการสั่งยา"], ["saved", "ผลที่บันทึกไว้"], ["drugs", `ตารางยาปรับขนาดตามไต (${num(drugs.length)})`]];
+  view.innerHTML = `<div class="toolbar"><h2>${esc(m.title)}</h2></div>
+    <div class="tabs" role="tablist">${tabs.map(([k, t]) => `<button type="button" role="tab" class="tab${k === renalTab ? " on" : ""}"
+      aria-selected="${k === renalTab}" data-act="tab" data-id="${k}">${esc(t)}</button>`).join("")}</div>
+    <div id="renal-body"></div>`;
+  const handlers = renalTab === "saved" ? await renalSavedTab(m) : renalTab === "drugs" ? renalDrugsTab(drugs) : renalCheckTab(m, drugs);
+  bind({ tab: (k) => { renalTab = k; renalView(m).then(decorateTitle).catch((e) => toast(e.message, true)); }, ...handlers });
+}
+
+function renalCheckTab(m, drugs) {
+  const drafts = drugs.filter((d) => d.draft).length;
+  $("#renal-body").innerHTML = `<section class="card">
+      <div class="panel-head"><h2>ตรวจขนาดยาตามการทำงานของไต</h2>
+        <div class="btn-row">${btn("import", "นำเข้า Excel รายการสั่งยา", "", "primary")}${btn("single", "ตรวจทีละรายการ")}${btn("template", "ดาวน์โหลดแม่แบบ")}</div></div>
+      <p class="hint">ไฟล์ต้องมีคอลัมน์ <b>ชื่อยา</b> และค่าการทำงานของไต (<b>CrCl</b> หรือ <b>eGFR</b> หรือ <b>SCr + อายุ + น้ำหนัก + เพศ</b>
+        ระบบคำนวณ CrCl ด้วย Cockcroft-Gault) ควรมี HN ขนาดยา และความถี่/วิธีใช้ เพื่อตรวจขนาดยาได้ครบ
+        ระบบตรวจในเครื่องนี้ ข้อมูลผู้ป่วยยังไม่ถูกบันทึกจนกว่าจะกด "บันทึกผลที่ต้องแจ้งเตือน"</p>
+      ${!drugs.length ? `<p class="alert bad">ยังไม่มีตารางยาที่ต้องปรับขนาดตามไต ${me.role === "admin" ? 'ไปที่แท็บ "ตารางยาปรับขนาดตามไต" เพื่อนำเข้า' : "แจ้งผู้ดูแลระบบให้นำเข้าตารางยา"}</p>`
+        : drafts ? `<p class="alert warn">ตารางยามี ${num(drafts)} รายการที่ยังเป็นร่าง รอเภสัชกรตรวจสอบ ผลตรวจของยาเหล่านี้ใช้ประกอบการพิจารณาเท่านั้น</p>` : ""}
+    </section>
+    <div id="renal-results"></div>`;
+  const draw = () => renalDrawResults(m);
+  draw();
+  const run = (rows, source) => {
+    renalResults = rows.map((p) => renalCheck(drugs, p));
+    renalSource = source;
+    renalFilter = "flag";
+    draw();
+  };
+  return {
+    import: async () => {
+      if (!drugs.length) return toast("ยังไม่มีตารางยาที่ต้องปรับขนาดตามไต", true);
+      const file = await pickFile(".xlsx,.csv");
+      if (!file) return;
+      try {
+        const target = findHeader(await readSpreadsheet(file), RENAL_ORDER_COLUMNS,
+          (c) => "drug" in c && ("crcl" in c || "egfr" in c || "scr" in c));
+        if (!target) throw new Error("ไม่พบหัวตาราง ต้องมีคอลัมน์ ชื่อยา และ CrCl, eGFR หรือ SCr (ดาวน์โหลดแม่แบบเพื่อดูรูปแบบ)");
+        const rows = renalOrderRows(target);
+        if (!rows.length) throw new Error("ไม่พบรายการยาในไฟล์");
+        run(rows, `${file.name} · ชีต ${target.sheet.name}`);
+        toast(`ตรวจแล้ว ${num(rows.length)} รายการ`);
+      } catch (err) {
+        toast(err.message, true);
+      }
+    },
+    single: () => {
+      if (!drugs.length) return toast("ยังไม่มีตารางยาที่ต้องปรับขนาดตามไต", true);
+      openForm({
+        title: "ตรวจขนาดยาทีละรายการ", wide: true, submitLabel: "ตรวจ",
+        fields: [
+          { name: "hn", label: "HN" }, { name: "name", label: "ชื่อผู้ป่วย" },
+          { name: "drug", label: "ชื่อยาที่สั่ง", required: true, placeholder: "เช่น Allopurinol 100 mg tablet" },
+          { name: "dose", label: "ขนาดยาต่อครั้ง", placeholder: "เช่น 300 mg" },
+          { name: "freq", label: "ความถี่ / วิธีใช้", placeholder: "เช่น OD, BID, q 12 hr, 1x3" },
+          { name: "crcl", label: "CrCl", type: "number", unit: "ml/min", section: "ค่าการทำงานของไต: ใส่ CrCl หรือ eGFR หรือ SCr + อายุ + น้ำหนัก + เพศ" },
+          { name: "egfr", label: "eGFR", type: "number", unit: "ml/min/1.73 m²" },
+          { name: "scr", label: "SCr", type: "number", unit: "mg/dL" },
+          { name: "age", label: "อายุ", type: "number", unit: "ปี" },
+          { name: "weight", label: "น้ำหนัก", type: "number", unit: "kg" },
+          { name: "sex", label: "เพศ", type: "select", options: ["ชาย", "หญิง"] },
+        ],
+        onSubmit: async (data) => {
+          const p = Object.fromEntries(Object.entries(data).filter(([, v]) => String(v).trim() !== ""));
+          if (!p.crcl && !p.egfr && !(p.scr && p.age && p.weight)) throw new Error("กรุณาใส่ CrCl หรือ eGFR หรือ SCr + อายุ + น้ำหนัก");
+          p.date = isoDate();
+          const r = renalCheck(drugs, p);
+          renalResults = [r, ...(renalResults || [])];
+          renalSource ||= "ตรวจทีละรายการ";
+          renalFilter = "all";
+          draw();
+          toast(`ผลตรวจ: ${RENAL_STATUS[r.status][0]}`, r.status === "bad");
+        },
+      });
+    },
+    template: () => downloadBlob(renalTemplate(), "แม่แบบรายการสั่งยาผู้ป่วยไต.xlsx"),
+    filter: (k) => { renalFilter = k; draw(); },
+    save: () => saveRenalResults(m).catch((e) => toast(e.message, true)),
+    xlsx: () => downloadBlob(renalResultsWorkbook(renalResults), `ผลตรวจยาผู้ป่วยไต_${when(isoDate(), false).replace(/\//g, "-")}.xlsx`),
+    clear: () => {
+      if (!confirm("ล้างผลตรวจที่แสดงอยู่? (ผลที่บันทึกแล้วยังอยู่ในแท็บผลที่บันทึกไว้)")) return;
+      renalResults = null;
+      renalSource = "";
+      draw();
+    },
+  };
+}
+
+function renalDrawResults() {
+  const box = $("#renal-results");
+  if (!box) return;
+  if (!renalResults) { box.innerHTML = ""; return; }
+  const count = (s) => renalResults.filter((r) => r.status === s).length;
+  const flagged = renalResults.filter((r) => r.status === "bad" || r.status === "review");
+  const unsaved = flagged.filter((r) => !r.saved).length;
+  const test = RENAL_FILTERS.find(([k]) => k === renalFilter)?.[2] || (() => true);
+  const shown = renalResults.filter(test);
+  const patients = new Set(renalResults.map((r) => r.hn).filter(Boolean)).size;
+  box.innerHTML = `<section class="card">
+      <div class="panel-head"><h2>ผลการตรวจ <small>${esc(renalSource)}</small></h2>
+        <div class="btn-row">${unsaved ? btn("save", `บันทึกผลที่ต้องแจ้งเตือน (${num(unsaved)})`, "", "primary") : ""}${btn("xlsx", "ดาวน์โหลดผล Excel")}${btn("clear", "ล้างผล")}</div></div>
+      <section class="kpis">
+        ${kpi("รายการยาที่ตรวจ", num(renalResults.length), patients ? `ผู้ป่วย ${num(patients)} คน` : "")}
+        ${kpi("ไม่เหมาะสม", num(count("bad")), "รายการ")}
+        ${kpi("ควรทบทวน", num(count("review")), "รายการ")}
+        ${kpi("เหมาะสม", num(count("ok")), `ไม่อยู่ในตาราง ${num(count("none"))} รายการ`)}
+      </section>
+      <div class="chips-bar">${RENAL_FILTERS.map(([k, label, t]) => `<button type="button" class="chip-btn${k === renalFilter ? " on" : ""}"
+        data-act="filter" data-id="${k}">${esc(label)} <b>${num(renalResults.filter(t).length)}</b></button>`).join("")}</div>
+      ${table(["ผล", "HN / ผู้ป่วย", "ยาที่สั่ง", "ค่าไต", "ขนาดยาที่สั่ง", "คำแนะนำ / เหตุผล"], shown.map((r) => [
+        badge(RENAL_STATUS[r.status][0], RENAL_STATUS[r.status][1]) + (r.saved ? `<br><small class="muted">บันทึกแล้ว</small>` : ""),
+        `${esc(r.hn || "-")}${r.name ? `<br><small>${esc(r.name)}</small>` : ""}${r.date ? `<br><small>${when(r.date, false)}</small>` : ""}`,
+        [`${esc(r.drug)}${r.matched ? `<br><small class="muted">ตาราง: ${esc(r.matched)}</small>${r.draft ? ` ${badge("ร่าง", "warn")}` : ""}` : ""}`, "col-drug"],
+        esc(renalValueText(r) || "-"),
+        esc(renalDoseText(r) || "-"),
+        [`${r.band ? `<div>${esc(r.band)}</div>` : ""}${r.reasons.length ? `<ul class="reasons">${r.reasons.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}` || "-", "col-wide"],
+      ]), "ไม่มีรายการในกลุ่มนี้")}
+    </section>`;
+}
+
+const renalKey = (date, hn, drug) => [date || "", String(hn || "").trim(), uniqueKey(drug)].join("|");
+
+async function saveRenalResults(m) {
+  const flagged = (renalResults || []).filter((r) => (r.status === "bad" || r.status === "review") && !r.saved);
+  if (!flagged.length) return toast("ไม่มีผลที่ต้องบันทึก", true);
+  const existing = await api("GET", `/records?module=${m.key}`);
+  const have = new Set(existing.map((r) => renalKey(r.record_date, r.hn, r.data.drug)));
+  const fresh = flagged.filter((r) => !have.has(renalKey(r.date || isoDate(), r.hn, r.drug)));
+  const rows = fresh.map((r) => ({
+    _row: r._row || "", record_date: r.date || isoDate(), hn: r.hn || "", patient_name: r.name || "",
+    drug: String(r.drug).slice(0, 200), matched: r.matched || "", result: RENAL_STATUS[r.status][0],
+    renal: renalValueText(r).slice(0, 200), dose: renalDoseText(r).slice(0, 200),
+    recommendation: r.band.slice(0, 2000), reasons: r.reasons.join("\n").slice(0, 2000),
+  }));
+  dlg.className = "";
+  dlg.innerHTML = dialogShell("บันทึกผลที่ต้องแจ้งเตือน", `
+    <p>จะบันทึก <b>${num(rows.length)}</b> รายการ (ไม่เหมาะสม/ควรทบทวน) ลงในแท็บ "ผลที่บันทึกไว้"</p>
+    ${flagged.length - rows.length ? `<p class="hint">ข้าม ${num(flagged.length - rows.length)} รายการที่เคยบันทึกแล้ว (วันที่ HN และชื่อยาเดียวกัน)</p>` : ""}
+    <p class="hint">ผลที่เหมาะสมและยาที่ไม่อยู่ในตารางไม่ถูกบันทึก</p>`,
+    rows.length ? `บันทึก ${num(rows.length)} รายการ` : null, rows.length ? "ยกเลิก" : "ปิด");
+  wireDialog(async () => {
+    for (let i = 0; i < rows.length; i += 500) await api("POST", "/records/import", { module: m.key, rows: rows.slice(i, i + 500) });
+    flagged.forEach((r) => (r.saved = true));
+    toast(`บันทึกแล้ว ${num(rows.length)} รายการ`);
+    renalDrawResults();
+  });
+  if (!rows.length) flagged.forEach((r) => (r.saved = true));
+}
+
+function renalResultsWorkbook(results) {
+  const rows = [["ผลตรวจ", "HN", "ชื่อผู้ป่วย", "วันที่", "ยาที่สั่ง", "ยาในตาราง", "ค่าการทำงานของไต", "ขนาดยาที่สั่ง", "คำแนะนำตามตาราง", "เหตุผล"]];
+  for (const r of results || []) {
+    rows.push([RENAL_STATUS[r.status][0], r.hn || "", r.name || "", r.date ? when(r.date, false) : "", r.drug, r.matched || "",
+      renalValueText(r), renalDoseText(r), r.band, r.reasons.join(" · ")]);
+  }
+  return buildXlsx([{ name: "ผลตรวจการสั่งยา", rows, bold: new Set([0]), widths: [12, 10, 20, 11, 32, 28, 18, 28, 40, 50] }]);
+}
+
+function renalTemplate() {
+  return buildXlsx([
+    {
+      name: "รายการสั่งยา", bold: new Set([0]), widths: [10, 12, 30, 16, 12, 12, 8, 8, 8, 8, 12, 8],
+      rows: [
+        ["HN", "วันที่", "ชื่อยา", "ขนาดยาต่อครั้ง (mg)", "ความถี่", "วิธีใช้", "CrCl", "eGFR", "SCr", "อายุ", "น้ำหนัก (kg)", "เพศ"],
+        ["000001", "22/10/2569", "Allopurinol 100 mg tablet", "300", "OD", "", "", "", "2.1", "70", "60", "ชาย"],
+        ["000001", "22/10/2569", "Metformin 500 mg tablet", "", "", "1x3 pc", "", "35", "", "", "", ""],
+        ["000002", "22/10/2569", "Ceftazidime 1 g injection", "1 g", "q 12 hr", "", "18", "", "", "", "", ""],
+      ],
+    },
+    {
+      name: "วิธีกรอก", widths: [110],
+      rows: [
+        ["วิธีกรอก (ข้อมูลในชีตแรกเป็นตัวอย่างสมมติ ลบออกก่อนใช้)"],
+        ["ชื่อยา: ชื่อสามัญ เช่น Allopurinol 100 mg tablet ยาฉีดให้มีคำว่า injection หรือ inj"],
+        ["ขนาดยาต่อครั้ง: ใส่เป็น mg (หรือ 1 g) ถ้าเว้นว่าง ระบบใช้ความแรงในชื่อยา × จำนวนเม็ดในวิธีใช้"],
+        ["ความถี่: OD, BID, TID, QID, q 12 hr, วันละ 2 ครั้ง, 3 ครั้ง/สัปดาห์ หรือใส่ในวิธีใช้แบบ 1x3"],
+        ["ค่าการทำงานของไต: ใส่ CrCl หรือ eGFR ถ้าไม่มี ใส่ SCr (mg/dL) + อายุ + น้ำหนัก + เพศ ระบบคำนวณ CrCl (Cockcroft-Gault)"],
+        ["ผู้ป่วยคนเดียวหลายรายการยา ใส่ค่าไตแถวแรกพอ แถวถัดไปที่ HN เดียวกันใช้ค่าเดิม"],
+        ["ใส่คอลัมน์ ชื่อผู้ป่วย ได้ถ้าต้องการบันทึกชื่อไว้กับผลที่ต้องแจ้งเตือน"],
+      ],
+    },
+  ]);
+}
+
+async function renalSavedTab(m) {
+  $("#renal-body").innerHTML = `<div class="toolbar">
+      ${monthInput()}
+      <input type="search" id="q" placeholder="ค้นหา HN ชื่อ หรือชื่อยา">
+      <button class="btn" data-act="csv">ส่งออก CSV</button>
+      <button class="btn primary" data-act="new">+ บันทึกเอง</button>
+    </div>
+    <div id="stats"></div>
+    <div class="list" id="list"></div>`;
+  let list = [];
+  let shown = [];
+  const draw = () => {
+    const q = $("#q").value.trim().toLowerCase();
+    shown = q ? list.filter((r) => recordText(r).includes(q)) : list;
+    $("#stats").innerHTML = statsHtml(m, shown);
+    $("#list").innerHTML = recordsTable(m, shown,
+      q ? "ไม่พบบันทึกที่ค้นหา" : `ยังไม่มีผลที่บันทึกไว้${currentMonth ? "ในเดือน" + monthLabel(currentMonth) : ""}`);
+  };
+  const load = async () => {
+    list = await api("GET", `/records?module=${m.key}${currentMonth ? "&month=" + currentMonth : ""}`);
+    draw();
+  };
+  $("#q").oninput = draw;
+  wireMonth(load);
+  await load();
+  return { new: () => openRecordForm(m), open: (id) => openRecord(id), csv: () => exportCsv(m, shown) };
+}
+
+function renalDrugsTab(drugs) {
+  const dm = MOD.renal_drugs;
+  const admin = me.role === "admin";
+  $("#renal-body").innerHTML = `<div class="toolbar">
+      <input type="search" id="q" placeholder="ค้นหาชื่อยา" value="${esc(renalDrugQuery)}">
+      <button class="btn" data-act="dxlsx">ดาวน์โหลด Excel</button>
+      ${admin ? `<button class="btn" data-act="dimport">นำเข้า Excel</button><button class="btn primary" data-act="dnew">+ เพิ่มยา</button>` : ""}
+    </div>
+    <p class="hint">ใช้ตรวจขนาดยาในแท็บ "ตรวจการสั่งยา" ช่วง 10-30 หมายถึง 10 ≤ ค่าไต &lt; 30
+      ${admin ? "" : " · เพิ่มหรือแก้ไขตารางได้เฉพาะผู้ดูแลระบบ"}</p>
+    <div class="list" id="list"></div>`;
+  const draw = () => {
+    const q = $("#q").value.trim().toLowerCase();
+    renalDrugQuery = q;
+    const shown = drugs.filter((d) => !q || `${d.name} ${d.aliases}`.toLowerCase().includes(q));
+    $("#list").innerHTML = table(["ชื่อยา", "ตัววัด", "ช่วงค่าการทำงานของไตและคำแนะนำ", ""], shown.map((d) => [
+      `<b>${esc(d.name)}</b>${d.aliases ? `<br><small class="muted">${esc(d.aliases)}</small>` : ""}${d.draft ? `<br>${badge("ร่าง รอตรวจสอบ", "warn")}` : ""}`,
+      esc(d.measure),
+      `<ul class="band-list">${d.bands.map((b) => `<li><span class="band-range">${esc(b.label)}</span>
+        ${badge(RENAL_LEVEL[b.level][0], RENAL_LEVEL[b.level][1])} <span>${esc(b.text)}</span></li>`).join("")}</ul>
+        ${d.errors.length ? `<p class="alert bad">${esc(d.errors.join(" · "))}</p>` : ""}`,
+      actions(`${btn("open", "ดู", d.rec.id)}${admin ? btn("dedit", "แก้ไข", d.rec.id) : ""}`),
+    ]), q ? "ไม่พบยาที่ค้นหา" : admin ? 'ยังไม่มีตารางยา กด "นำเข้า Excel" หรือ "+ เพิ่มยา"' : "ยังไม่มีตารางยา");
+  };
+  $("#q").oninput = draw;
+  draw();
+  return {
+    open: (id) => openRecord(id),
+    dnew: () => openRecordForm(dm, null, { measure: "CrCl", status: DRAFT }),
+    dedit: (id) => openRecordForm(dm, drugs.find((d) => String(d.rec.id) === String(id))?.rec),
+    dxlsx: () => downloadBlob(renalDrugsWorkbook(drugs), "ตารางยาปรับขนาดตามไต.xlsx"),
+    dimport: () => importRenalDrugs(dm, drugs).catch((e) => toast(e.message, true)),
+  };
+}
+
+const RENAL_DRUG_HEAD = ["ชื่อยา", "ชื่ออื่น/ชื่อการค้า", "ตัววัด", "ค่าต่ำสุด", "ค่าสูงสุด", "คำแนะนำ", "สถานะข้อมูล", "แหล่งอ้างอิง", "หมายเหตุ"];
+
+// 1 แถว = 1 ช่วงค่าไต (รูปแบบเดียวกับที่นำเข้าได้)
+function renalDrugsWorkbook(drugs) {
+  const rows = [RENAL_DRUG_HEAD];
+  for (const d of drugs) {
+    d.bands.forEach((b, i) => rows.push([d.name, i ? "" : d.aliases, d.measure, b.range[0], b.range[1] ?? "", b.text,
+      i ? "" : d.rec.data.status || "", i ? "" : d.rec.data.reference || "", i ? "" : d.rec.data.note || ""]));
+  }
+  return buildXlsx([
+    { name: "ตารางยาปรับตามไต", rows, bold: new Set([0]), widths: [34, 24, 8, 10, 10, 50, 22, 24, 30] },
+    { name: "วิธีกรอก", widths: [110], rows: [
+      ["1 แถว = 1 ช่วงค่าการทำงานของไตของยา 1 ตัว ยาที่มีหลายช่วงให้ใส่ชื่อยาซ้ำหลายแถว (หรือเว้นชื่อยาว่างในแถวถัดไป)"],
+      ["ค่าต่ำสุด–ค่าสูงสุด: 10 ถึง 30 = 10 ≤ ค่าไต < 30 · ค่าต่ำสุด 0 = ต่ำกว่าค่าสูงสุด · ค่าสูงสุดเว้นว่าง = ตั้งแต่ค่าต่ำสุดขึ้นไป"],
+      ["ตัววัด: CrCl (ml/min) หรือ eGFR (ml/min/1.73 m²)"],
+      ["คำแนะนำที่มีขนาดยา เช่น 100 mg/day, 500 mg q 24 hr, 30 mg BID, 15 mg/kg, 3 ครั้ง/สัปดาห์ ระบบใช้ตรวจขนาดยาและความถี่อัตโนมัติ"],
+      ["คำว่า ห้ามใช้ / ไม่แนะนำให้ใช้ = แจ้งเตือนไม่เหมาะสม · ไม่ควรเริ่ม = ควรทบทวน · ไม่จำเป็นต้องปรับ = เหมาะสม"],
+      ["สถานะข้อมูล: เว้นว่าง = ร่าง – รอเภสัชกรตรวจสอบ ใส่ ตรวจสอบแล้ว เมื่อเภสัชกรตรวจแล้ว"],
+    ] },
+  ]);
+}
+
+const RENAL_DRUG_COLUMNS = {
+  name: ["ชื่อยา", "รายการยา", "drug", "drugname"],
+  aliases: ["ชื่ออื่นชื่อการค้า", "ชื่ออื่น", "ชื่อการค้า", "aliases"],
+  measure: ["ตัววัด", "ตัววัดการทำงานของไต", "measure"],
+  min: ["ค่าต่ำสุด", "ต่ำสุด", "min"],
+  max: ["ค่าสูงสุด", "สูงสุด", "max"],
+  range: ["ช่วงค่าไต", "ช่วง", "range"],
+  text: ["คำแนะนำ", "ขนาดยาที่แนะนำ", "การปรับขนาดยา", "recommendation"],
+  status: ["สถานะข้อมูล", "สถานะ"],
+  reference: ["แหล่งอ้างอิง", "อ้างอิง"],
+  note: ["หมายเหตุ", "note"],
+};
+
+async function importRenalDrugs(dm, drugs) {
+  const file = await pickFile(".xlsx,.csv");
+  if (!file) return;
+  const target = findHeader(await readSpreadsheet(file), RENAL_DRUG_COLUMNS,
+    (c) => "name" in c && "text" in c && ("min" in c || "range" in c));
+  if (!target) throw new Error("ไม่พบหัวตาราง ต้องมีคอลัมน์ ชื่อยา คำแนะนำ และ ค่าต่ำสุด/ค่าสูงสุด (หรือ ช่วง) ดาวน์โหลด Excel เพื่อดูรูปแบบ");
+  const { sheet, head, cols } = target;
+  const get = (row, k) => (k in cols ? cellText(row[cols[k]]) : "");
+  const byName = new Map();
+  const errors = [];
+  let lastName = "";
+  for (let i = head + 1; i < sheet.rows.length; i++) {
+    const row = sheet.rows[i] || [];
+    const name = get(row, "name") || lastName;
+    const text = get(row, "text");
+    if (!name || !text) continue;
+    lastName = name;
+    let range = null;
+    if (get(row, "range")) range = renalRange(get(row, "range"));
+    else if (get(row, "min") !== "" || get(row, "max") !== "") {
+      const lo = renalNum(get(row, "min") || 0);
+      const hi = get(row, "max") ? renalNum(get(row, "max")) : null;
+      if (lo != null && (hi != null || !get(row, "max"))) range = [lo, hi];
+    }
+    if (!range) { errors.push(`แถว ${i + 1} ${name}: อ่านช่วงค่าไตไม่ได้`); continue; }
+    const key = uniqueKey(name);
+    const d = byName.get(key) || { drug: name, aliases: "", measure: "", lines: [], status: "", reference: "", note: "" };
+    d.aliases ||= get(row, "aliases");
+    d.measure ||= /egfr/i.test(get(row, "measure")) ? "eGFR" : get(row, "measure") ? "CrCl" : "";
+    d.status ||= get(row, "status");
+    d.reference ||= get(row, "reference");
+    d.note ||= get(row, "note");
+    d.lines.push(`${rangeLabel(range[0], range[1])}: ${text}`);
+    byName.set(key, d);
+  }
+  const existing = new Map(drugs.map((d) => [uniqueKey(d.name), d.rec]));
+  const statusOf = (s) => (s === "ตรวจสอบแล้ว" ? s : DRAFT);
+  const toAdd = [];
+  const toUpdate = [];
+  for (const d of byName.values()) {
+    const bands = d.lines.join("\n");
+    const problem = parseBands(bands).errors[0];
+    if (problem) { errors.push(`${d.drug}: ${problem}`); continue; }
+    const values = { drug: d.drug, aliases: d.aliases, measure: d.measure || "CrCl", bands, status: statusOf(d.status), reference: d.reference, note: d.note };
+    const old = existing.get(uniqueKey(d.drug));
+    if (!old) toAdd.push({ _row: d.drug, ...values });
+    else if (["aliases", "measure", "bands", "reference", "note"].some((k) => String(old.data[k] || "") !== String(values[k] || "")) || old.data.status !== values.status) {
+      toUpdate.push([old, { ...old.data, ...values, aliases: values.aliases || old.data.aliases || "", reference: values.reference || old.data.reference || "",
+        note: values.note || old.data.note || "" }]);
+    }
+  }
+  const same = byName.size - toAdd.length - toUpdate.length - errors.filter((e) => !e.startsWith("แถว")).length;
+  const total = toAdd.length + toUpdate.length;
+  const info = (label, value) => `<div><small>${label}</small><div>${value}</div></div>`;
+  dlg.className = "wide";
+  dlg.innerHTML = dialogShell("นำเข้าตารางยาปรับขนาดตามไต", `
+    <p class="hint">${esc(file.name)} · ชีต ${esc(sheet.name)} · พบยา ${num(byName.size)} รายการ</p>
+    <div class="info-grid">
+      ${info("ยาใหม่", `<b>${num(toAdd.length)}</b> รายการ`)}
+      ${info("แก้ไขยาเดิม", `<b>${num(toUpdate.length)}</b> รายการ`)}
+      ${info("เหมือนเดิม (ข้าม)", `${num(Math.max(0, same))} รายการ`)}
+      ${info("ข้อผิดพลาด (ข้าม)", `${num(errors.length)} รายการ`)}
+    </div>
+    <p class="alert warn">ยาที่ไม่ระบุสถานะ "ตรวจสอบแล้ว" ในไฟล์ จะเป็น "${DRAFT}" ต้องให้เภสัชกรตรวจก่อนใช้ตัดสินใจ</p>
+    ${errors.length ? `<details open><summary>ดูข้อผิดพลาด</summary><ul class="history">${errors.slice(0, 50).map((s) => `<li>${esc(s)}</li>`).join("")}</ul></details>` : ""}`,
+    total ? `นำเข้า ${num(total)} รายการ` : null, total ? "ยกเลิก" : "ปิด");
+  wireDialog(async (_, form) => {
+    const submit = $("button[type=submit]", form);
+    if (toAdd.length) await api("POST", "/records/import", { module: dm.key, rows: toAdd });
+    for (const [i, [old, values]] of toUpdate.entries()) {
+      submit.textContent = `กำลังแก้ไข ${num(i + 1)} / ${num(toUpdate.length)}`;
+      await api("PUT", `/records/${old.id}`, values);
+    }
+    toast(`นำเข้าแล้ว: ยาใหม่ ${num(toAdd.length)} · แก้ไข ${num(toUpdate.length)} รายการ`);
+    refresh();
+  });
+}
+
 // ตารางเวร: แสดงเป็นปฏิทินรายเดือน (มือถือแสดงเป็นรายการวัน)
 async function calendarView(m) {
   if (!currentMonth) currentMonth = isoDate().slice(0, 7);
@@ -2383,7 +3075,7 @@ async function searchView() {
     return;
   }
   const q = searchText.toLowerCase();
-  const menus = MODULES.filter((m) => `${m.title} ${m.group}`.toLowerCase().includes(q));
+  const menus = MODULES.filter((m) => !m.hidden && `${m.title} ${m.group}`.toLowerCase().includes(q));
   // เซิร์ฟเวอร์ค้นใน JSON ทั้งก้อนซึ่งรวมชื่อช่องด้วย จึงกรองซ้ำเฉพาะค่าที่กรอกจริง
   const list = (await api("GET", `/records?q=${encodeURIComponent(searchText)}`))
     .filter((r) => `${recordText(r)} ${r.created_by_name}`.includes(q));
@@ -2465,6 +3157,7 @@ const ICONS = {
   copd: '<path d="M3 8h10a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7"/>',
   dm: '<path d="M15 3l6 6M18 6l-9.5 9.5-4-4L14 2M4.5 19.5l2-2M8 11l2 2M11 8l2 2"/>',
   stock_check: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/>',
+  renal_check: '<path d="M10 4.5C8.7 3 4 3.2 4 9c0 5.5 2.3 10 5 10 2.3 0 2.8-2.5 1.6-4.4C9.5 13 9.5 11 11 9.6c1.3-1.2 0-3.6-1-5.1z"/><path d="M14 4.5c1.3-1.5 6-1.3 6 4.5 0 5.5-2.3 10-5 10-2.3 0-2.8-2.5-1.6-4.4 1.1-1.6 1.1-3.6-.4-5-1.3-1.2 0-3.6 1-5.1z"/>',
   purchase: '<path d="M3 4h2l2.5 11h11L21 7H6.2"/><circle cx="9" cy="19.5" r="1.3"/><circle cx="17" cy="19.5" r="1.3"/>',
   duty: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   guidelines: '<path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H19v15H5.5A1.5 1.5 0 0 0 4 19.5z"/><path d="M4 19.5A1.5 1.5 0 0 0 5.5 21H19v-3M8 7h7M8 10.5h5"/>',
@@ -2525,7 +3218,7 @@ function modCardText(m, s) {
 async function dashboardView() {
   const s = await api("GET", `/summary${currentMonth ? "?month=" + currentMonth : ""}`);
   const groups = [];
-  for (const m of MODULES) {
+  for (const m of MODULES.filter((x) => !x.hidden)) {
     if (groups.at(-1)?.[0] !== m.group) groups.push([m.group, []]);
     groups.at(-1)[1].push(m);
   }
@@ -2659,7 +3352,8 @@ function buildViews() {
     search: { title: "ค้นหา", render: searchView, hidden: true },
     patient: { title: "ประวัติผู้ป่วย", render: patientView, hidden: true },
   };
-  for (const m of MODULES) VIEWS[m.key] = { title: m.title, group: m.group, render: () => moduleView(m) };
+  // งานที่มี hidden (เช่น ตารางยาปรับขนาดตามไต) ไม่แสดงในเมนู เข้าจากหน้าของงานที่ใช้ข้อมูลนั้น
+  for (const m of MODULES) VIEWS[m.key] = { title: m.title, group: m.group, hidden: Boolean(m.hidden), render: () => moduleView(m) };
   VIEWS.users = { title: "ผู้ใช้", group: "ตั้งค่า", render: usersView, role: "admin" };
 }
 const allowed = (key) => Boolean(VIEWS[key]) && (!VIEWS[key].role || me?.role === VIEWS[key].role);

@@ -392,6 +392,24 @@ details summary { cursor: pointer; color: var(--primary); }
 .alert { padding: .5rem .7rem; border-radius: 8px; margin: 0 0 .6rem; }
 .alert.bad { background: var(--bad-bg); color: var(--bad); }
 .alert.muted { background: var(--bg); color: var(--muted); border: 1px solid var(--border); }
+.alert.warn { background: var(--warn-bg); color: var(--warn); }
+
+/* แท็บภายในหน้า (การใช้ยาในผู้ป่วยไตบกพร่อง) */
+.tabs { display: flex; flex-wrap: wrap; gap: .2rem; margin: 0 0 1rem; border-bottom: 1px solid var(--border); }
+.tab {
+  font: inherit; cursor: pointer; color: var(--muted); background: none; border: 0;
+  border-bottom: 3px solid transparent; padding: .55rem .9rem; margin-bottom: -1px;
+}
+.tab:hover { color: var(--text); }
+.tab.on { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+.btn-row { display: flex; flex-wrap: wrap; gap: .4rem; }
+.btn-row .btn + .btn { margin-left: 0; }
+.band-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .35rem; }
+.band-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem; }
+.band-range { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 3.5rem; }
+.reasons { margin: .25rem 0 0; padding-left: 1.1rem; font-size: .85rem; }
+td.col-drug { min-width: 11rem; }
+td.col-wide { min-width: 18rem; }
 .hn-info { margin-bottom: .9rem; }
 .meta { color: var(--muted); font-size: .85rem; margin: .8rem 0 0; }
 .pre { white-space: pre-line; overflow-wrap: anywhere; }

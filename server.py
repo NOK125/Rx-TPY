@@ -489,8 +489,15 @@ def get_record_endpoint(req, record_id):
     return get_record(req.conn, record_id)
 
 
+def check_write(req, module):
+    """งานที่มี admin_write (เช่น ตารางยาปรับขนาดตามไต) เพิ่ม/แก้ไข/นำเข้าได้เฉพาะผู้ดูแลระบบ"""
+    if module.get("admin_write") and req.user["role"] != "admin":
+        raise ApiError(403, "ข้อมูลนี้เพิ่มหรือแก้ไขได้เฉพาะผู้ดูแลระบบ")
+
+
 def create_record(req):
     module = get_module(req.body.get("module"))
+    check_write(req, module)
     record_date, hn, patient_name, data = record_values(module, req.body)
     resolve_files(req.conn, module, data)
     record_id = req.conn.execute(
@@ -506,6 +513,7 @@ MAX_IMPORT = 500
 def import_records(req):
     """นำเข้าหลายแถวพร้อมกัน (เช่น จาก Excel) ผิดแถวเดียวไม่บันทึกทั้งชุด"""
     module = get_module(req.body.get("module"))
+    check_write(req, module)
     rows_in = req.body.get("rows")
     if not isinstance(rows_in, list) or not rows_in:
         raise ApiError(400, "ไม่มีข้อมูลที่จะนำเข้า")
@@ -554,6 +562,7 @@ def update_record(req, record_id):
     rec = get_record(req.conn, record_id)
     can_edit(req, rec)
     module = get_module(rec["module"])
+    check_write(req, module)
     record_date, hn, patient_name, data = record_values(module, req.body)
     resolve_files(req.conn, module, data)
     req.conn.execute(

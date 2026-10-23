@@ -444,8 +444,14 @@ async function listRecords(req) {
 
 const getRecordEndpoint = (req, recordId) => getRecord(req.db, recordId);
 
+// งานที่มี admin_write (เช่น ตารางยาปรับขนาดตามไต) เพิ่ม/แก้ไข/นำเข้าได้เฉพาะผู้ดูแลระบบ
+function checkWrite(req, module) {
+  if (module.admin_write && req.user.role !== "admin") throw new ApiError(403, "ข้อมูลนี้เพิ่มหรือแก้ไขได้เฉพาะผู้ดูแลระบบ");
+}
+
 async function createRecord(req) {
   const module = getModule(req.body.module);
+  checkWrite(req, module);
   const v = await withFiles(req.db, module, recordValues(module, req.body));
   const [inserted] = await req.db.batch([
     req.db.prepare(
@@ -466,6 +472,7 @@ const SNAPSHOT_SQL = `json_object('id', id, 'module', module, 'record_date', rec
 // ใช้คำสั่งเดียวผ่าน json_each เพราะ D1 จำกัดจำนวนคำสั่งต่อครั้งและจำนวนพารามิเตอร์ต่อคำสั่ง
 async function importRecords(req) {
   const module = getModule(req.body.module);
+  checkWrite(req, module);
   const rows = req.body.rows;
   if (!Array.isArray(rows) || !rows.length) throw new ApiError(400, "ไม่มีข้อมูลที่จะนำเข้า");
   if (rows.length > MAX_IMPORT) throw new ApiError(400, `นำเข้าได้ครั้งละไม่เกิน ${MAX_IMPORT} แถว`);
@@ -521,6 +528,7 @@ async function updateRecord(req, recordId) {
   const rec = await getRecord(req.db, recordId);
   canEdit(req, rec);
   const module = getModule(rec.module);
+  checkWrite(req, module);
   const v = await withFiles(req.db, module, recordValues(module, req.body));
   await req.db.batch([
     req.db.prepare(

@@ -134,6 +134,49 @@
   "stats": ["unit"]
  },
  {
+  "key": "renal_check",
+  "group": "ความปลอดภัยด้านยา",
+  "title": "การใช้ยาในผู้ป่วยที่มีภาวะไตบกพร่อง",
+  "view": "renal",
+  "patient": true,
+  "patient_optional": true,
+  "date_label": "วันที่สั่งยา",
+  "fields": [
+   {"name": "drug", "label": "ยาที่สั่ง", "type": "text", "required": true},
+   {"name": "matched", "label": "ยาในตารางปรับขนาดตามไต", "type": "text"},
+   {"name": "result", "label": "ผลการตรวจ", "type": "select", "required": true, "options": ["ไม่เหมาะสม", "ควรทบทวน"]},
+   {"name": "renal", "label": "ค่าการทำงานของไตที่ใช้", "type": "text", "placeholder": "เช่น CrCl 25 ml/min"},
+   {"name": "dose", "label": "ขนาดยาที่สั่ง", "type": "text", "placeholder": "เช่น 500 mg วันละ 3 ครั้ง"},
+   {"name": "recommendation", "label": "คำแนะนำตามตาราง", "type": "textarea"},
+   {"name": "reasons", "label": "เหตุผลที่แจ้งเตือน", "type": "textarea"},
+   {"name": "action", "label": "การดำเนินการ", "type": "select", "options": ["แจ้งแพทย์ ปรับขนาดยาแล้ว", "แจ้งแพทย์ ยืนยันขนาดยาเดิม", "หยุดยา / เปลี่ยนยา", "ติดตามผล", "ไม่ต้องดำเนินการ"], "section": "การดำเนินการ"},
+   {"name": "note", "label": "หมายเหตุ", "type": "textarea"}
+  ],
+  "list": ["drug", "result", "renal", "action"],
+  "stats": ["result", "action"]
+ },
+ {
+  "key": "renal_drugs",
+  "group": "ความปลอดภัยด้านยา",
+  "title": "ตารางยาที่ต้องปรับขนาดตามการทำงานของไต",
+  "hidden": true,
+  "no_date": true,
+  "admin_write": true,
+  "unique": "drug",
+  "count_unit": "รายการ",
+  "fields": [
+   {"name": "drug", "label": "ชื่อยา", "type": "text", "required": true, "placeholder": "เช่น Allopurinol tablet", "hint": "ยาฉีดให้มีคำว่า injection เพื่อแยกจากยากิน"},
+   {"name": "aliases", "label": "ชื่ออื่น / ชื่อการค้า", "type": "text", "hint": "คั่นด้วยเครื่องหมาย , ใช้ช่วยจับคู่ชื่อยาที่สั่ง"},
+   {"name": "measure", "label": "ตัววัดการทำงานของไต", "type": "select", "required": true, "options": ["CrCl", "eGFR"]},
+   {"name": "bands", "label": "ช่วงค่าการทำงานของไตและคำแนะนำ", "type": "textarea", "rows": 6, "required": true, "placeholder": "<10: ไม่แนะนำให้ใช้ยา\n10-30: 250 mg q 12 hr\n>=30: ไม่จำเป็นต้องปรับขนาดการใช้ยา", "hint": "1 บรรทัด = 1 ช่วง: ช่วงค่าไต ตามด้วย : แล้วคำแนะนำ ช่วง 10-30 หมายถึง 10 ≤ ค่าไต < 30"},
+   {"name": "reference", "label": "แหล่งอ้างอิง", "type": "text", "section": "การตรวจสอบข้อมูล"},
+   {"name": "status", "label": "สถานะข้อมูล", "type": "select", "required": true, "options": ["ร่าง – รอเภสัชกรตรวจสอบ", "ตรวจสอบแล้ว"]},
+   {"name": "verified_by", "label": "ผู้ตรวจสอบ", "type": "staff"},
+   {"name": "note", "label": "หมายเหตุ", "type": "textarea"}
+  ],
+  "list": ["drug", "measure", "status"]
+ },
+ {
   "key": "counsel",
   "group": "งานบริการผู้ป่วย",
   "title": "ให้คำปรึกษาด้านยา",
