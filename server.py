@@ -390,6 +390,24 @@ def clean_field(field, value):
             return None
         file_id = value.get("id") if isinstance(value, dict) else value
         return {"id": int(to_num(file_id, label, True, 1))}
+    if kind == "answers":
+        # คำตอบรายข้อของแบบประเมิน {รหัสข้อ: ข้อความ} เช่น {"1.1": "Y", "2.1.1_v": "3"}
+        if value in (None, "", {}):
+            if required:
+                raise ApiError(400, f"กรุณากรอก{label}")
+            return None
+        if not isinstance(value, dict) or len(value) > 300:
+            raise ApiError(400, f"{label}ไม่ถูกต้อง")
+        answers = {}
+        for key, text in value.items():
+            if not re.fullmatch(r"[A-Za-z0-9_.\-]{1,40}", str(key)):
+                raise ApiError(400, f"{label}ไม่ถูกต้อง")
+            text = to_str(text, label, False, 500)
+            if text is not None:
+                answers[str(key)] = text
+        if required and not answers:
+            raise ApiError(400, f"กรุณากรอก{label}")
+        return answers or None
     if kind == "multi":
         values = value if isinstance(value, list) else ([] if value in (None, "") else [value])
         values = [str(v) for v in values]

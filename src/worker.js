@@ -339,6 +339,23 @@ function cleanField(field, value) {
     if (!Number.isInteger(id)) throw new ApiError(400, `${label}ไม่ถูกต้อง`);
     return { id };
   }
+  if (type === "answers") {
+    // คำตอบรายข้อของแบบประเมิน {รหัสข้อ: ข้อความ} เช่น {"1.1": "Y", "2.1.1_v": "3"}
+    const empty = value == null || value === "" || (typeof value === "object" && !Array.isArray(value) && !Object.keys(value).length);
+    if (empty) {
+      if (required) throw new ApiError(400, `กรุณากรอก${label}`);
+      return null;
+    }
+    if (typeof value !== "object" || Array.isArray(value) || Object.keys(value).length > 300) throw new ApiError(400, `${label}ไม่ถูกต้อง`);
+    const answers = {};
+    for (const [key, text] of Object.entries(value)) {
+      if (!/^[A-Za-z0-9_.-]{1,40}$/.test(key)) throw new ApiError(400, `${label}ไม่ถูกต้อง`);
+      const t = toStr(text, label, false, 500);
+      if (t != null) answers[key] = t;
+    }
+    if (required && !Object.keys(answers).length) throw new ApiError(400, `กรุณากรอก${label}`);
+    return Object.keys(answers).length ? answers : null;
+  }
   if (type === "multi") {
     const values = (Array.isArray(value) ? value : value == null || value === "" ? [] : [value]).map(String);
     if (values.some((v) => !field.options.includes(v))) throw new ApiError(400, `${label}: ตัวเลือกไม่ถูกต้อง`);

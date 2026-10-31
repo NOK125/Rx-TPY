@@ -203,6 +203,7 @@ const flat = (rec) => ({ record_date: rec.record_date, hn: rec.hn, patient_name:
 function showValue(f, v, html = true) {
   if (v == null || v === "" || (Array.isArray(v) && !v.length)) return "-";
   let text;
+  if (f.type === "answers") return html ? `<small class="muted">ผลรายข้อ ${num(Object.keys(v).length)} ค่า</small>` : "ผลรายข้อ";
   if (f.type === "file") return html ? `${fileLink(v)} <small>${fileSize(v.size)}</small>` : v.name;
   if (Array.isArray(v)) text = v.join(", ");
   else if (f.type === "date") text = when(v, false);
@@ -266,6 +267,7 @@ const FORM_CHECKS = {
 };
 
 function openRecordForm(m, rec = null, preset = {}) {
+  if (m.view === "due") return openDueForm(m, rec, preset);
   const fields = allFields(m);
   const form = openForm({
     title: `${rec ? "แก้ไข" : "บันทึก"} ${m.title}`,
@@ -310,6 +312,7 @@ async function openRecord(id) {
   let rec;
   try { rec = await api("GET", `/records/${id}`); } catch (e) { return toast(e.message, true); }
   const m = MOD[rec.module];
+  if (m.view === "due") return openDueRecord(rec);
   const v = flat(rec);
   const cells = allFields(m).map((f) => `<div class="${["textarea", "multi"].includes(f.type) ? "full" : ""}">
       <small>${esc(f.label)}</small><div class="pre">${showValue(f, v[f.name])}</div></div>`).join("");
@@ -457,6 +460,7 @@ async function moduleView(m) {
   if (m.view === "stockcheck") return stockcheckView(m);
   if (m.view === "drugsafety") return drugsafetyView(m);
   if (m.view === "renal") return renalView(m);
+  if (m.view === "due") return dueView(m);
   view.innerHTML = `<div class="toolbar">
       <h2>${esc(m.title)}</h2>
       ${monthInput()}
@@ -2314,6 +2318,368 @@ async function drugsafetyView(m) {
   draw();
 }
 
+// ---------- รายงานการประเมิน DUE (Drug Use Evaluation) ----------
+// เกณฑ์ของแต่ละยาอยู่ใน modules.json (forms ของงาน due) ตามแบบประเมินของกลุ่มงานเภสัชกรรม
+// คำตอบรายข้อเก็บในช่อง answers: {รหัสข้อ: "Y" | "N" | "NA", รหัสข้อ_v: ค่าที่วัดได้, รหัสข้อ_n: หมายเหตุ}
+// สรุปผล: ต้องตอบ "ใช่" ทุกข้อที่ประเมินจึง "เหมาะสม" ข้อที่ไม่เกี่ยวกับข้อบ่งใช้ที่เลือกจะไม่แสดง
+
+const DUE_ANSWER = { Y: "ใช่", N: "ไม่ใช่", NA: "ไม่ประเมิน" };
+const dueForm = (drug) => (MOD.due?.forms || []).find((f) => f.drug === drug);
+const dueIndicationLabel = (form, key) => (form.indications || []).find(([k]) => k === key)?.[1] || "";
+const dueIndicationKey = (form, label) => (form.indications || []).find(([, l]) => l === label)?.[0] || "";
+
+// ข้อที่ต้องประเมินตามข้อบ่งใช้ที่เลือก
+function dueSections(form, ind) {
+  return form.sections.map((s) => ({ ...s, items: s.items.filter((it) => !it.for || it.for.includes(ind)) }))
+    .filter((s) => s.items.length);
+}
+
+// สรุปผลรายหมวดและภาพรวม
+function dueEvaluate(form, ind, answers) {
+  const sections = dueSections(form, ind).map((s) => {
+    const vals = s.items.map((it) => answers[it.id]);
+    const status = vals.some((v) => !v) ? "incomplete" : vals.includes("N") ? "bad" : vals.every((v) => v === "NA") ? "na" : "ok";
+    return { ...s, status, missing: vals.filter((v) => !v).length };
+  });
+  const missing = sections.reduce((n, s) => n + s.missing, 0) + (form.indications && !ind ? 1 : 0);
+  const failed = [...new Set(sections.filter((s) => s.status === "bad").map((s) => s.cat))];
+  return { sections, missing, failed, result: missing ? "" : failed.length ? "ไม่เหมาะสม" : "เหมาะสม" };
+}
+
+const DUE_SECTION_BADGE = { ok: ["เหมาะสม", "ok"], bad: ["ไม่เหมาะสม", "bad"], na: ["ไม่ประเมิน", "muted"], incomplete: ["ยังตอบไม่ครบ", "warn"] };
+const dueResultBadge = (r) => (r ? badge(r, r === "เหมาะสม" ? "ok" : "bad") : badge("ยังประเมินไม่ครบ", "warn"));
+
+function dueSummaryHtml(ev) {
+  return `<ul class="due-summary">${ev.sections.map((s) => `<li><span>${esc(s.summary)}</span>${badge(...DUE_SECTION_BADGE[s.status])}</li>`).join("")}
+    <li class="total"><span>สรุปผลการประเมินการใช้ยา</span>${dueResultBadge(ev.result)}</li></ul>`;
+}
+
+// เลือกยาที่จะประเมินก่อนเปิดแบบประเมิน
+function chooseDueDrug(m, preset = {}) {
+  const forms = m.forms || [];
+  dlg.className = "";
+  dlg.innerHTML = dialogShell("เลือกยาที่จะประเมิน", `<div class="due-pick">${forms.map((f, i) =>
+    `<button type="button" class="btn" data-pick="${i}"><b>${esc(f.drug)}</b><small>${esc(f.heading)}</small></button>`).join("")}</div>`, null);
+  const form = wireDialog(() => {});
+  form.onclick = (e) => {
+    const b = e.target.closest("[data-pick]");
+    if (b) openDueForm(m, null, { ...preset, drug: forms[Number(b.dataset.pick)].drug });
+  };
+}
+
+function openDueForm(m, rec = null, preset = {}) {
+  const v = rec ? flat(rec) : { record_date: isoDate(), evaluator: me.full_name, ...preset };
+  const form = dueForm(v.drug);
+  if (!form) return chooseDueDrug(m, preset);
+  const answers = { ...(v.answers || {}) };
+  let ind = dueIndicationKey(form, v.indication) || (form.indications?.length === 1 ? form.indications[0][0] : "");
+  const patientFields = [
+    { name: "record_date", label: "วันที่ประเมิน", type: "date", required: true },
+    { name: "hn", label: "HN", required: true, autocomplete: "off" },
+    { name: "patient_name", label: "ชื่อ-นามสกุลผู้ป่วย", required: true },
+    { name: "an", label: "AN" },
+    { name: "dept", label: "แผนก", type: "select", options: ["OPD", "IPD"] },
+    { name: "physician", label: "แพทย์ผู้ทำการรักษา" },
+  ];
+  const tailFields = [
+    { name: "action", label: "การดำเนินการ / ข้อเสนอแนะ", type: "textarea" },
+    { name: "evaluator", label: "ผู้ประเมิน", type: "staff", required: true },
+  ];
+  dlg.className = "wide";
+  dlg.innerHTML = dialogShell(`${rec ? "แก้ไข" : ""}แบบประเมินความเหมาะสมในการใช้ยา (DUE)`, `
+    <p class="hint"><b>${esc(form.heading)}</b><br>ตอบ "ใช่" ทุกข้อที่ประเมินจึงสรุปว่า "เหมาะสม" · ข้อที่ไม่เกี่ยวข้องเลือก "ไม่ประเมิน"</p>
+    <div class="hn-info" hidden></div>
+    <div class="fields two">${patientFields.map((f) => fieldHtml(f, v)).join("")}
+      ${form.indications ? `<label class="field full"><span>ข้อบ่งใช้ที่ประเมิน *</span><select id="due-ind">
+        ${option("", "— เลือกข้อบ่งใช้ —", ind)}${form.indications.map(([k, l]) => option(k, l, ind)).join("")}</select></label>` : ""}
+    </div>
+    <div id="due-criteria"></div>
+    <h3 class="form-section">5. สรุปผลการประเมินความเหมาะสมในการใช้ยา</h3>
+    <div id="due-live"></div>
+    <div class="fields two">${tailFields.map((f) => fieldHtml(f, v)).join("")}</div>`, "บันทึกผลการประเมิน");
+  const box = $("#due-criteria", dlg);
+  const live = () => { $("#due-live", dlg).innerHTML = dueSummaryHtml(dueEvaluate(form, ind, answers)); };
+  const drawCriteria = () => {
+    if (form.indications && !ind) {
+      box.innerHTML = `<p class="alert warn">เลือกข้อบ่งใช้ก่อน ระบบจะแสดงเกณฑ์ที่ต้องประเมินตามข้อบ่งใช้นั้น</p>`;
+      return live();
+    }
+    box.innerHTML = dueSections(form, ind).map((s) => {
+      let sub = "";
+      return `<h3 class="form-section">${esc(s.title)}</h3><div class="due-items">${s.items.map((it) => {
+        const head = it.sub && it.sub !== sub ? `<div class="due-sub">${esc((sub = it.sub))}</div>` : "";
+        return `${head}<div class="due-item" data-id="${esc(it.id)}">
+          <div class="due-text"><b>${esc(it.id.replace(/-\d+$/, ""))}</b> ${esc(it.text)}</div>
+          <div class="due-answer" role="radiogroup" aria-label="${esc(it.id)}">${Object.entries(DUE_ANSWER).map(([k, l]) =>
+            `<label class="due-opt ${k}"><input type="radio" name="due_${esc(it.id)}" value="${k}" ${answers[it.id] === k ? "checked" : ""}>${l}</label>`).join("")}</div>
+          ${it.input ? `<label class="due-input"><span>${esc(it.input)}</span><input ${it.number ? 'type="number" step="any"' : ""} data-val="${esc(it.id)}" value="${esc(answers[it.id + "_v"] || "")}"></label>` : ""}
+          <input class="due-note" data-note="${esc(it.id)}" placeholder="หมายเหตุ" value="${esc(answers[it.id + "_n"] || "")}" aria-label="หมายเหตุข้อ ${esc(it.id)}">
+        </div>`;
+      }).join("")}</div>`;
+    }).join("");
+    live();
+  };
+  drawCriteria();
+  const indSelect = $("#due-ind", dlg);
+  if (indSelect) indSelect.onchange = () => { ind = indSelect.value; drawCriteria(); };
+  box.addEventListener("change", (e) => {
+    const t = e.target;
+    if (t.type === "radio") answers[t.name.slice(4)] = t.value;
+    if (t.dataset.val) {
+      const it = form.sections.flatMap((s) => s.items).find((x) => x.id === t.dataset.val);
+      answers[`${it.id}_v`] = t.value.trim();
+      // ค่าที่วัดได้ตามเกณฑ์ (เช่น mMRC ≥2) เลือก ใช่/ไม่ใช่ ให้อัตโนมัติ แก้เองได้
+      if (t.value.trim() !== "") {
+        answers[it.id] = it.auto_min == null || Number(t.value) >= it.auto_min ? "Y" : "N";
+        const radio = $(`[name="due_${CSS.escape(it.id)}"][value="${answers[it.id]}"]`, box);
+        if (radio) radio.checked = true;
+      }
+    }
+    if (t.dataset.note) answers[`${t.dataset.note}_n`] = t.value.trim();
+    live();
+  });
+  box.addEventListener("input", (e) => {
+    if (e.target.dataset.note) answers[`${e.target.dataset.note}_n`] = e.target.value.trim();
+  });
+  const formEl = wireDialog(async (_, f) => {
+    const ev = dueEvaluate(form, ind, answers);
+    if (form.indications && !ind) throw new Error("กรุณาเลือกข้อบ่งใช้ที่ประเมิน");
+    if (ev.missing) throw new Error(`ยังประเมินไม่ครบ ${num(ev.missing)} ข้อ (เลือก ใช่ / ไม่ใช่ / ไม่ประเมิน ทุกข้อ)`);
+    // เก็บเฉพาะคำตอบของข้อที่ประเมินตามข้อบ่งใช้ที่เลือก
+    const ids = new Set(ev.sections.flatMap((s) => s.items.map((it) => it.id)));
+    const kept = Object.fromEntries(Object.entries(answers).filter(([k, val]) => val && ids.has(k.replace(/_[vn]$/, ""))));
+    const body = {
+      module: m.key, ...formValues(f, [...patientFields, ...tailFields]), drug: form.drug,
+      indication: dueIndicationLabel(form, ind), answers: kept, result: ev.result, failed: ev.failed,
+    };
+    await api(rec ? "PUT" : "POST", rec ? `/records/${rec.id}` : "/records", body);
+    toast(`บันทึกแล้ว: ${ev.result}`);
+    refresh();
+  });
+  const hn = $("[name=hn]", formEl);
+  hn.onchange = () => lookupHN(formEl);
+  if (hn.value) lookupHN(formEl);
+}
+
+function openDueRecord(rec) {
+  const m = MOD.due;
+  const form = dueForm(rec.data.drug);
+  const d = rec.data;
+  const ans = d.answers || {};
+  const ev = form ? dueEvaluate(form, dueIndicationKey(form, d.indication), ans) : null;
+  const info = (label, value) => `<div><small>${esc(label)}</small><div>${value}</div></div>`;
+  const criteria = ev ? ev.sections.map((s) => `<h3 class="form-section">${esc(s.title)}</h3>
+    ${table(["ข้อ", "เกณฑ์การประเมิน", "ผล", "หมายเหตุ"], s.items.map((it) => [
+      esc(it.id.replace(/-\d+$/, "")),
+      `${it.sub ? `<small class="muted">${esc(it.sub)}</small><br>` : ""}${esc(it.text)}${ans[it.id + "_v"] ? `<br><small>${esc(it.input || "ค่าที่ได้")}: <b>${esc(ans[it.id + "_v"])}</b></small>` : ""}`,
+      ans[it.id] ? badge(DUE_ANSWER[ans[it.id]], ans[it.id] === "Y" ? "ok" : ans[it.id] === "N" ? "bad" : "muted") : "-",
+      esc(ans[it.id + "_n"] || ""),
+    ]), "-")}`).join("") : `<p class="alert warn">ไม่พบแบบประเมินของยานี้</p>`;
+  const buttons = [
+    (me.role === "admin" || rec.created_by === me.id) && btn("edit", "แก้ไข", "", "primary"),
+    btn("print", "พิมพ์แบบประเมิน"),
+    btn("history", "ประวัติการแก้ไข"),
+    btn("patient", "ประวัติผู้ป่วยรายนี้"),
+    me.role === "admin" && btn("delete", "ลบ", "", "danger"),
+  ].filter(Boolean);
+  dlg.className = "wide";
+  dlg.innerHTML = dialogShell(`แบบประเมิน DUE · ${esc(d.drug)}`, `
+    <div class="info-grid">
+      ${info("วันที่ประเมิน", when(rec.record_date, false))}${info("HN", esc(rec.hn))}${info("ชื่อผู้ป่วย", esc(rec.patient_name))}
+      ${info("AN", esc(d.an || "-"))}${info("แผนก", esc(d.dept || "-"))}${info("แพทย์ผู้ทำการรักษา", esc(d.physician || "-"))}
+      ${d.indication ? info("ข้อบ่งใช้ที่ประเมิน", esc(d.indication)) : ""}${info("ผู้ประเมิน", esc(d.evaluator || "-"))}
+      ${info("สรุปผล", dueResultBadge(d.result))}
+    </div>
+    ${criteria}
+    ${ev ? `<h3 class="form-section">5. สรุปผลการประเมินความเหมาะสมในการใช้ยา</h3>${dueSummaryHtml(ev)}` : ""}
+    ${d.action ? `<h3 class="form-section">การดำเนินการ / ข้อเสนอแนะ</h3><p class="pre">${esc(d.action)}</p>` : ""}
+    <p class="meta">บันทึกโดย ${esc(rec.created_by_name)} ${when(rec.created_at)}${rec.updated_at ? ` · แก้ไขล่าสุดโดย ${esc(rec.updated_by_name)} ${when(rec.updated_at)}` : ""}</p>
+    <div class="doc-actions">${buttons.join("")}</div>`, null, "ปิด");
+  const formEl = wireDialog(() => {});
+  formEl.onclick = async (e) => {
+    const b = e.target.closest("[data-act]");
+    if (!b) return;
+    const act = b.dataset.act;
+    if (act === "edit") return openDueForm(m, rec);
+    if (act === "print") return printDue(rec);
+    if (act === "history") return openHistory(m, rec);
+    if (act === "patient") { dlg.close(); return openPatient(rec.hn); }
+    if (act === "delete") {
+      if (!confirm("ลบแบบประเมินนี้? (ข้อมูลยังเก็บไว้ในประวัติการแก้ไข)")) return;
+      try { await api("POST", `/records/${rec.id}/delete`, {}); toast("ลบแล้ว"); dlg.close(); refresh(); }
+      catch (err) { toast(err.message, true); }
+    }
+  };
+}
+
+// พิมพ์ตามรูปแบบแบบประเมินกระดาษ
+function printDue(rec) {
+  const d = rec.data;
+  const form = dueForm(d.drug);
+  if (!form) return toast("ไม่พบแบบประเมินของยานี้", true);
+  const ans = d.answers || {};
+  const ev = dueEvaluate(form, dueIndicationKey(form, d.indication), ans);
+  const mark = (id, k) => (ans[id] === k ? "✓" : "");
+  $("#print").innerHTML = `<div class="report due-print">
+    <h1>แบบประเมินความเหมาะสมในการใช้ยา (Drug Use Evaluation; DUE)</h1>
+    <p class="center">กลุ่มงานเภสัชกรรมและคุ้มครองผู้บริโภค โรงพยาบาลตาพระยา</p>
+    <p class="center"><b>${esc(form.heading)}</b></p>
+    <p>ชื่อ-นามสกุล: <b>${esc(rec.patient_name)}</b> &nbsp; HN: <b>${esc(rec.hn)}</b> &nbsp; AN: ${esc(d.an || "-")} &nbsp; แผนก: ${esc(d.dept || "-")}
+      &nbsp; แพทย์ผู้ทำการรักษา: ${esc(d.physician || "-")} &nbsp; วันที่ประเมิน: ${when(rec.record_date, false)}
+      ${d.indication ? `<br>ข้อบ่งใช้ที่ประเมิน: ${esc(d.indication)}` : ""}</p>
+    <table><thead><tr><th>ลำดับ</th><th>เกณฑ์การประเมิน</th><th>ใช่</th><th>ไม่ใช่</th><th>หมายเหตุ</th></tr></thead><tbody>
+      ${ev.sections.map((s) => `<tr class="sec"><td colspan="5"><b>${esc(s.title)}</b></td></tr>${s.items.map((it) => `<tr>
+        <td>${esc(it.id.replace(/-\d+$/, ""))}</td>
+        <td>${it.sub ? `<small>${esc(it.sub)}</small><br>` : ""}${esc(it.text)}${ans[it.id + "_v"] ? ` [${esc(it.input || "ได้เท่ากับ")} ${esc(ans[it.id + "_v"])}]` : ""}</td>
+        <td class="center">${mark(it.id, "Y")}</td><td class="center">${mark(it.id, "N")}</td>
+        <td>${ans[it.id] === "NA" ? "ไม่ประเมิน " : ""}${esc(ans[it.id + "_n"] || "")}</td></tr>`).join("")}`).join("")}
+      <tr class="sec"><td colspan="5"><b>สรุปผลการประเมินความเหมาะสมในการใช้ยา (ต้องตอบ “ใช่” ทุกข้อเท่านั้นจึงจะสรุปการประเมินว่า “เหมาะสม”)</b></td></tr>
+      ${ev.sections.map((s) => `<tr><td colspan="2">${esc(s.summary)}</td><td colspan="3">${esc(DUE_SECTION_BADGE[s.status][0])}</td></tr>`).join("")}
+      <tr><td colspan="2"><b>สรุปผลการประเมินการใช้ยา ${esc(d.drug)}</b></td><td colspan="3"><b>${esc(d.result || "-")}</b></td></tr>
+    </tbody></table>
+    ${d.action ? `<p><b>การดำเนินการ / ข้อเสนอแนะ:</b> <span class="pre">${esc(d.action)}</span></p>` : ""}
+    <div class="signs one"><div class="sign"><div>ลงชื่อ ....................................... ผู้ประเมิน</div>
+      <div>( ${esc(d.evaluator || "")} )</div></div></div>
+  </div>`;
+  window.print();
+}
+
+// ---------- หน้าวิเคราะห์ผลการประเมิน DUE ----------
+
+let duePeriod = "all";
+let dueDrug = "all";
+
+async function dueView(m) {
+  view.innerHTML = `<div class="toolbar">
+      <h2>${esc(m.title)}</h2>
+      <select id="period" aria-label="ช่วงเวลา"></select>
+      <input type="search" id="q" placeholder="ค้นหา HN ชื่อ แพทย์">
+      <button class="btn" data-act="xlsx">ดาวน์โหลด Excel</button>
+      <button class="btn primary" data-act="new">+ ประเมินใหม่</button>
+    </div>
+    <div class="chips-bar" id="drugs"></div>
+    <div id="analysis"></div>
+    <h3 class="group-title">รายการแบบประเมิน</h3>
+    <div class="list" id="list"></div>`;
+  const all = await api("GET", `/records?module=${m.key}`);
+  const years = [...new Set(all.map((r) => fiscalYear(r.record_date)))].sort((a, b) => b - a);
+  const months = [...new Set(all.map((r) => r.record_date.slice(0, 7)))].sort().reverse();
+  const periods = [["all", "ทั้งหมด"], ...years.map((y) => [`fy:${y}`, `ปีงบประมาณ ${y}`]), ...months.map((k) => [`m:${k}`, monthLabel(k)])];
+  if (!periods.some(([k]) => k === duePeriod)) duePeriod = "all";
+  $("#period").innerHTML = periods.map(([k, t]) => option(k, t, duePeriod)).join("");
+  let shown = [];
+  const draw = () => {
+    duePeriod = $("#period").value;
+    const [kind, val] = duePeriod.split(":");
+    const inPeriod = all.filter((r) => (kind === "fy" ? fiscalYear(r.record_date) === Number(val) : kind === "m" ? r.record_date.startsWith(val) : true));
+    const drugs = (m.forms || []).map((f) => f.drug);
+    $("#drugs").innerHTML = [["all", "ทุกยา"], ...drugs.map((d) => [d, d])].map(([k, label]) =>
+      `<button type="button" class="chip-btn${k === dueDrug ? " on" : ""}" data-act="drug" data-id="${esc(k)}">${esc(label)}
+        <b>${num(inPeriod.filter((r) => k === "all" || r.data.drug === k).length)}</b></button>`).join("");
+    const rows = inPeriod.filter((r) => dueDrug === "all" || r.data.drug === dueDrug);
+    const q = $("#q").value.trim().toLowerCase();
+    shown = q ? rows.filter((r) => recordText(r).includes(q) || String(r.data.physician || "").toLowerCase().includes(q)) : rows;
+    $("#analysis").innerHTML = all.length ? dueAnalysis(m, rows) : `<p class="hint">ยังไม่มีแบบประเมิน กด "+ ประเมินใหม่" เพื่อเริ่มประเมินการสั่งใช้ยา</p>`;
+    $("#list").innerHTML = table(["วันที่ประเมิน", "HN", "ชื่อผู้ป่วย", "ยา", "ผล", "เกณฑ์ที่ไม่เหมาะสม", "ผู้ประเมิน", ""], shown.map((r) => [
+      when(r.record_date, false), esc(r.hn || "-"), esc(r.patient_name || "-"),
+      `${esc(r.data.drug)}${r.data.indication ? `<br><small class="muted">${esc(r.data.indication)}</small>` : ""}`,
+      dueResultBadge(r.data.result), esc((r.data.failed || []).join(", ") || "-"), esc(r.data.evaluator || "-"),
+      actions(btn("open", "ดู", r.id)),
+    ]), q ? "ไม่พบแบบประเมินที่ค้นหา" : "ยังไม่มีแบบประเมินในช่วงนี้");
+  };
+  $("#period").onchange = draw;
+  $("#q").oninput = draw;
+  bind({
+    drug: (k) => { dueDrug = k; draw(); },
+    new: () => (dueDrug !== "all" ? openDueForm(m, null, { drug: dueDrug }) : chooseDueDrug(m)),
+    open: (id) => openRecord(id),
+    xlsx: () => (shown.length ? downloadBlob(dueWorkbook(m, shown), `ผลการประเมิน DUE - ${$("#period").selectedOptions[0].text}.xlsx`)
+      : toast("ไม่มีข้อมูลในช่วงที่เลือก", true)),
+  });
+  draw();
+}
+
+function dueAnalysis(m, rows) {
+  const total = rows.length;
+  const ok = rows.filter((r) => r.data.result === "เหมาะสม").length;
+  const rate = (a, b) => (b ? (a * 100 / b).toFixed(1) + "%" : "-");
+  const patients = new Set(rows.map((r) => r.hn)).size;
+  // ร้อยละเหมาะสมแยกตามยา
+  const byDrug = (m.forms || []).map((f) => {
+    const list = rows.filter((r) => r.data.drug === f.drug);
+    const good = list.filter((r) => r.data.result === "เหมาะสม").length;
+    return { label: f.drug, value: list.length ? good * 100 / list.length : 0, text: rate(good, list.length), sub: `${good}/${list.length} ราย` };
+  }).filter((x) => x.sub !== "0/0 ราย");
+  // เกณฑ์ที่ไม่เหมาะสมบ่อย
+  const catCount = new Map();
+  for (const r of rows) for (const c of r.data.failed || []) catCount.set(c, (catCount.get(c) || 0) + 1);
+  const cats = [...catCount].sort((a, b) => b[1] - a[1]).map(([label, value]) => ({ label, value, sub: `ราย (${rate(value, total)})` }));
+  // ข้อที่ตอบ "ไม่ใช่" บ่อย (รายข้อของทุกแบบประเมินในช่วงนี้)
+  const itemCount = new Map();
+  for (const r of rows) {
+    const f = dueForm(r.data.drug);
+    if (!f) continue;
+    for (const s of f.sections) for (const it of s.items) {
+      if (r.data.answers?.[it.id] !== "N") continue;
+      const key = `${f.drug}|${it.id}`;
+      const cur = itemCount.get(key) || { label: `${dueDrug === "all" ? f.drug.split(" ")[0] + " · " : ""}ข้อ ${it.id.replace(/-\d+$/, "")}`, title: it.text, value: 0 };
+      cur.value += 1;
+      itemCount.set(key, cur);
+    }
+  }
+  const items = [...itemCount.values()].sort((a, b) => b.value - a.value).slice(0, 10).map((x) => ({ ...x, sub: "ครั้ง" }));
+  // แนวโน้มรายเดือน
+  const months = [...new Set(rows.map((r) => r.record_date.slice(0, 7)))].sort();
+  const trend = months.map((k) => {
+    const list = rows.filter((r) => r.record_date.startsWith(k));
+    const good = list.filter((r) => r.data.result === "เหมาะสม").length;
+    return { label: shortMonth(k), value: good * 100 / list.length, text: rate(good, list.length), title: `${monthLabel(k)}: เหมาะสม ${good}/${list.length} ราย` };
+  });
+  const byDept = ["OPD", "IPD"].map((d) => {
+    const list = rows.filter((r) => r.data.dept === d);
+    const good = list.filter((r) => r.data.result === "เหมาะสม").length;
+    return { label: d, value: list.length ? good * 100 / list.length : 0, text: rate(good, list.length), sub: `${good}/${list.length} ราย` };
+  }).filter((x) => x.sub !== "0/0 ราย");
+  return `<section class="kpis">
+      ${kpi("จำนวนที่ประเมิน", num(total), `ผู้ป่วย ${num(patients)} คน`)}
+      ${kpi("เหมาะสม", rate(ok, total), `${num(ok)} ราย`)}
+      ${kpi("ไม่เหมาะสม", rate(total - ok, total), `${num(total - ok)} ราย`)}
+      ${kpi("เกณฑ์ที่ไม่เหมาะสมบ่อยที่สุด", cats[0] ? `${num(cats[0].value)} ราย` : "-", esc(cats[0]?.label || "ไม่มี"))}
+    </section>
+    <div class="grid2 analysis">
+      <section class="card"><h2>ร้อยละความเหมาะสมแยกตามยา</h2>${barList(byDrug)}</section>
+      <section class="card"><h2>เกณฑ์ที่ประเมินว่าไม่เหมาะสม</h2>${barList(cats, "ไม่พบเกณฑ์ที่ไม่เหมาะสม")}</section>
+      <section class="card"><h2>ข้อที่ตอบ "ไม่ใช่" บ่อย <small>เลื่อนเมาส์เพื่อดูเกณฑ์</small></h2>${barList(items, "ไม่มีข้อที่ตอบไม่ใช่")}</section>
+      <section class="card"><h2>ร้อยละความเหมาะสมรายเดือน</h2>${columnChart(trend)}
+        ${byDept.length ? `<h3>แยกตามแผนก</h3>${barList(byDept)}` : ""}</section>
+    </div>`;
+}
+
+function dueWorkbook(m, rows) {
+  const sheets = [];
+  const head = ["วันที่ประเมิน", "HN", "ชื่อผู้ป่วย", "AN", "แผนก", "แพทย์ผู้ทำการรักษา", "ยา", "ข้อบ่งใช้", "สรุปผล", "เกณฑ์ที่ไม่เหมาะสม", "การดำเนินการ", "ผู้ประเมิน"];
+  const base = (r) => [when(r.record_date, false), r.hn || "", r.patient_name || "", r.data.an || "", r.data.dept || "", r.data.physician || "",
+    r.data.drug, r.data.indication || "", r.data.result || "", (r.data.failed || []).join(", "), r.data.action || "", r.data.evaluator || ""];
+  sheets.push({ name: "สรุปทุกยา", bold: new Set([0]), widths: [12, 10, 22, 10, 7, 20, 30, 24, 11, 30, 30, 20], rows: [head, ...rows.map(base)] });
+  // ชีตรายยา: คำตอบรายข้อ
+  for (const f of m.forms || []) {
+    const list = rows.filter((r) => r.data.drug === f.drug);
+    if (!list.length) continue;
+    const items = f.sections.flatMap((s) => s.items);
+    sheets.push({
+      name: f.drug.split(" ")[0], bold: new Set([0]),
+      rows: [[...head.slice(0, 3), "ข้อบ่งใช้", "สรุปผล", ...items.map((it) => `ข้อ ${it.id.replace(/-\d+$/, "")} ${it.text.slice(0, 60)}`)],
+        ...list.map((r) => [when(r.record_date, false), r.hn || "", r.patient_name || "", r.data.indication || "", r.data.result || "",
+          ...items.map((it) => {
+            const a = r.data.answers?.[it.id];
+            const val = r.data.answers?.[it.id + "_v"];
+            return a ? DUE_ANSWER[a] + (val ? ` (${val})` : "") : "";
+          })])],
+    });
+  }
+  return buildXlsx(sheets);
+}
+
 // ---------- การใช้ยาในผู้ป่วยที่มีภาวะไตบกพร่อง ----------
 // ตารางยา (งาน renal_drugs): 1 บันทึกต่อยา 1 ตัว ช่วงค่าไตเก็บในช่อง bands บรรทัดละช่วง เช่น "10-30: 250 mg q 12 hr"
 // ตรวจรายการสั่งยาในเบราว์เซอร์ ข้อมูลผู้ป่วยไม่ถูกบันทึกจนกว่าจะกด "บันทึกผล" (บันทึกเฉพาะผลที่ไม่เหมาะสม/ควรทบทวน)
@@ -3148,6 +3514,7 @@ async function patientView() {
 
 const ICONS = {
   home: '<path d="M3 11l9-7 9 7v9h-6v-6H9v6H3z"/>',
+  due: '<path d="M9 3h6v3H9z"/><path d="M7 4.5H5V21h14V4.5h-2"/><path d="M8 11h2M8 15h2M12.5 11h3.5M12.5 15h3.5"/>',
   adr: '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M12 8v5M12 16.5v.01"/>',
   med_error: '<path d="M12 3.5L2.5 20h19z"/><path d="M12 10v4M12 17v.01"/>',
   offhour_rx: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',

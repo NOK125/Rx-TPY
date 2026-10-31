@@ -410,6 +410,27 @@ details summary { cursor: pointer; color: var(--primary); }
 .reasons { margin: .25rem 0 0; padding-left: 1.1rem; font-size: .85rem; }
 td.col-drug { min-width: 11rem; }
 td.col-wide { min-width: 18rem; }
+
+/* แบบประเมิน DUE */
+.due-pick { display: grid; gap: .5rem; }
+.due-pick .btn { display: grid; gap: .15rem; text-align: left; padding: .7rem .9rem; margin: 0; }
+.due-pick small { color: var(--muted); font-weight: 400; }
+.due-items { display: grid; gap: .5rem; margin-bottom: .6rem; }
+.due-sub { font-weight: 600; color: var(--primary); margin-top: .4rem; }
+.due-item { border: 1px solid var(--border); border-radius: 10px; padding: .6rem .75rem; display: grid; gap: .45rem; background: var(--surface); }
+.due-text { line-height: 1.5; }
+.due-answer { display: flex; flex-wrap: wrap; gap: .4rem; }
+.due-opt { display: inline-flex; align-items: center; gap: .3rem; border: 1px solid var(--border); border-radius: 99px; padding: .2rem .75rem; cursor: pointer; }
+.due-opt input { width: auto; margin: 0; }
+.due-opt.Y:has(input:checked) { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); font-weight: 600; }
+.due-opt.N:has(input:checked) { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); font-weight: 600; }
+.due-opt.NA:has(input:checked) { background: var(--bg); border-color: var(--muted); font-weight: 600; }
+.due-input { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; font-size: .9rem; }
+.due-input input { width: 9rem; }
+.due-note { font-size: .88rem; }
+.due-summary { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; gap: .35rem; }
+.due-summary li { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .35rem .6rem; border-radius: 8px; background: var(--bg); }
+.due-summary li.total { font-weight: 600; background: var(--soft); }
 .hn-info { margin-bottom: .9rem; }
 .meta { color: var(--muted); font-size: .85rem; margin: .8rem 0 0; }
 .pre { white-space: pre-line; overflow-wrap: anywhere; }

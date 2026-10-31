@@ -46,9 +46,138 @@
   "stats": ["preg_level", "lact_level", "light"]
  },
  {
-  "key": "adr",
+  "key": "due",
   "group": "ความปลอดภัยด้านยา",
   "title": "รายงานการประเมิน DUE",
+  "view": "due",
+  "patient": true,
+  "date_label": "วันที่ประเมิน",
+  "fields": [
+   {"name": "drug", "label": "ยาที่ประเมิน", "type": "select", "required": true, "options": ["Anoro Ellipta (Umeclidinium/Vilanterol)", "Empagliflozin 10 mg", "Clarithromycin 500 mg"]},
+   {"name": "indication", "label": "ข้อบ่งใช้ที่ประเมิน", "type": "text"},
+   {"name": "an", "label": "AN", "type": "text"},
+   {"name": "dept", "label": "แผนก", "type": "select", "options": ["OPD", "IPD"]},
+   {"name": "physician", "label": "แพทย์ผู้ทำการรักษา", "type": "text"},
+   {"name": "answers", "label": "ผลการประเมินรายข้อ", "type": "answers", "required": true},
+   {"name": "result", "label": "สรุปผลการประเมิน", "type": "select", "required": true, "options": ["เหมาะสม", "ไม่เหมาะสม"]},
+   {"name": "failed", "label": "เกณฑ์ที่ไม่เหมาะสม", "type": "multi", "options": ["ข้อบ่งใช้", "ข้อปฏิบัติในการรักษา", "ข้อปฏิบัติก่อนการใช้ยา", "ข้อปฏิบัติระหว่างการใช้ยา", "ขนาดและวิธีการบริหารยา", "ระยะเวลาในการรักษา", "ข้อห้ามในการใช้ยา", "อาการไม่พึงประสงค์", "อันตรกิริยาระหว่างยา"]},
+   {"name": "action", "label": "การดำเนินการ / ข้อเสนอแนะ", "type": "textarea"},
+   {"name": "evaluator", "label": "ผู้ประเมิน", "type": "staff", "required": true}
+  ],
+  "list": ["drug", "result", "failed", "evaluator"],
+  "stats": ["drug", "result", "failed"],
+  "forms": [
+   {
+    "drug": "Anoro Ellipta (Umeclidinium/Vilanterol)",
+    "heading": "ยา Anoro Ellipta® (Umeclidinium/Vilanterol): ยานอกบัญชียาหลักแห่งชาติ (NED)",
+    "indications": [["B", "GOLD Group B"], ["E", "GOLD Group E"]],
+    "sections": [
+     {"cat": "ข้อบ่งใช้", "title": "1. เกณฑ์ด้านข้อบ่งใช้ (Indications criteria)", "summary": "1. เกณฑ์ด้านข้อบ่งใช้", "items": [
+      {"id": "1.1", "for": ["B"], "text": "GOLD Group B: ผู้ป่วยที่ประเมิน mMRC ≥2 และ CAT ≥10 และ/หรือมีอาการกำเริบในช่วง 1 ปีที่ผ่านมา"},
+      {"id": "1.2", "for": ["E"], "text": "GOLD Group E: ผู้ป่วยที่ประเมิน mMRC ≥2 และ CAT ≥10 และ/หรือมีอาการกำเริบในช่วง 1 ปีที่ผ่านมา ≥2 ครั้ง หรืออาการกำเริบในช่วง 1 ปีที่ผ่านมาและจำเป็นต้องเข้ารับการรักษาตัวเป็นผู้ป่วยในโรงพยาบาล [กรณีมีระดับ Eosinophil ≥300 cells/µL หรือ Eosinophil ≥100 cells/µL ร่วมกับมีการกำเริบรุนแรงซ้ำ และจำเป็นต้องนอนโรงพยาบาลในช่วง 1 ปีที่ผ่านมา ให้พิจารณาเพิ่ม ICS (Inhaled Corticosteroids)]"}
+     ]},
+     {"cat": "ข้อปฏิบัติในการรักษา", "title": "2. เกณฑ์ด้านข้อปฏิบัติในการรักษา (Process indications criteria) · 2.1 ข้อปฏิบัติก่อนการใช้ยา", "summary": "2. เกณฑ์ด้านข้อปฏิบัติในการรักษา", "items": [
+      {"id": "2.1.1", "text": "ประเมิน mMRC ≥2", "input": "mMRC ที่ได้", "number": true, "auto_min": 2},
+      {"id": "2.1.2", "text": "ประเมิน CAT ≥10", "input": "CAT ที่ได้", "number": true, "auto_min": 10},
+      {"id": "2.1.3", "for": ["E"], "text": "ประเมินระดับ Eosinophil (Group E)", "input": "Eosinophil (cells/µL)", "number": true}
+     ]},
+     {"cat": "ขนาดและวิธีการบริหารยา", "title": "3. เกณฑ์ด้านแบบแผนการใช้ยา (Dosage regimen criteria) · 3.1 ขนาดและวิธีการบริหารยา", "summary": "3.1 ขนาดและวิธีการบริหารยา", "items": [
+      {"id": "3.1.1", "text": "ขนาดยาแนะนำและขนาดยาสูงสุด คือ สูด อะโนโร เอลลิปต้า 62.5/25 ไมโครกรัม วันละ 1 ครั้ง"}
+     ]},
+     {"cat": "ระยะเวลาในการรักษา", "title": "3.2 ระยะเวลาในการรักษา", "summary": "3.2 ระยะเวลาในการรักษา", "items": [
+      {"id": "3.2.1", "text": "Umeclidinium/Vilanterol เป็นยาที่ใช้ในการรักษาระยะยาว โดยไม่มีการกำหนดระยะเวลาการรักษา"}
+     ]},
+     {"cat": "ข้อห้ามในการใช้ยา", "title": "4. เกณฑ์ด้านข้อห้ามในการใช้ยา (Contraindication criteria)", "summary": "4. เกณฑ์ด้านข้อห้ามในการใช้ยา", "items": [
+      {"id": "4.1", "text": "ผู้ป่วยอายุมากกว่าหรือเท่ากับ 18 ปี"},
+      {"id": "4.2", "text": "ผู้ป่วยไม่มีโรคหืด และไม่ใช้สำหรับบรรเทาอาการเฉียบพลัน"},
+      {"id": "4.3", "text": "ผู้ป่วยไม่มีประวัติแพ้ยา Anoro Ellipta® หรือส่วนประกอบของยา"}
+     ]}
+    ]
+   },
+   {
+    "drug": "Empagliflozin 10 mg",
+    "heading": "ยา Empagliflozin 10 mg: ยานอกบัญชียาหลักแห่งชาติ (NED)",
+    "sections": [
+     {"cat": "ข้อบ่งใช้", "title": "1. เกณฑ์ด้านข้อบ่งใช้ (Indication criteria)", "summary": "1. เกณฑ์ด้านข้อบ่งใช้", "items": [
+      {"id": "1.1", "text": "โรคเบาหวานชนิดที่ 2 (DM type 2) ให้เป็นยาเดี่ยว หรือรักษาร่วมกับยาอื่น ๆ ที่มีข้อบ่งใช้ในการรักษาโรคเบาหวานชนิดที่ 2 เมื่อผู้ป่วยมี HbA1C ≥7% และ/หรือ FBS (fasting blood sugar) ≥130 mg/dL"}
+     ]},
+     {"cat": "ข้อปฏิบัติในการรักษา", "title": "2. เกณฑ์ด้านข้อปฏิบัติในการรักษา (Process indication criteria)", "summary": "2. เกณฑ์ด้านข้อปฏิบัติในการรักษา", "items": [
+      {"id": "2.1", "text": "มีการประเมิน HbA1C, fasting/random plasma glucose และการทำงานของไต (eGFR) ก่อนเริ่มยา"}
+     ]},
+     {"cat": "ขนาดและวิธีการบริหารยา", "title": "3. เกณฑ์ด้านแบบแผนการใช้ยา (Dosage regimen criteria) · 3.1 ขนาดและวิธีการบริหารยา: โรคเบาหวานชนิดที่ 2 (DM type 2)", "summary": "3.1 ขนาดและวิธีการบริหารยา", "items": [
+      {"id": "3.1.1", "text": "Empagliflozin 10 mg รับประทานครั้งละ 1 เม็ด วันละ 1 ครั้ง หลังจากเริ่มยา 2-4 สัปดาห์สามารถเพิ่มขนาดยาจนถึง 25 mg/วัน"}
+     ]},
+     {"cat": "ระยะเวลาในการรักษา", "title": "3.2 ระยะเวลาในการรักษา", "summary": "3.2 ระยะเวลาในการรักษา", "items": [
+      {"id": "3.2.1", "text": "Empagliflozin เป็นยาที่ใช้ในการรักษาระยะยาว โดยไม่มีการกำหนดระยะเวลาการรักษา"}
+     ]},
+     {"cat": "ข้อห้ามในการใช้ยา", "title": "4. เกณฑ์ด้านข้อห้ามในการใช้ยา (Contraindication criteria)", "summary": "4. เกณฑ์ด้านข้อห้ามในการใช้ยา", "items": [
+      {"id": "4.1", "text": "ผู้ป่วยไม่ได้เป็นโรคเบาหวานชนิดที่ 1 (DM type 1)"},
+      {"id": "4.2", "text": "ผู้ป่วยไม่ได้มี eGFR <30 mL/min/1.73 m2 หรือผู้ป่วยล้างไต"},
+      {"id": "4.3", "text": "ผู้ป่วยอายุมากกว่าหรือเท่ากับ 18 ปี"},
+      {"id": "4.4", "text": "ผู้ป่วยไม่ได้เป็นหญิงตั้งครรภ์ หรือให้นมบุตร"},
+      {"id": "4.5", "text": "ผู้ป่วยไม่มีประวัติแพ้ยา Empagliflozin หรือส่วนประกอบของยา"}
+     ]}
+    ]
+   },
+   {
+    "drug": "Clarithromycin 500 mg",
+    "heading": "ยา Clarithromycin 500 mg (Clacina®): ยาในบัญชียาหลักแห่งชาติ (ED)",
+    "indications": [["resp", "โรคติดเชื้อของทางเดินหายใจ"], ["mac1", "MAC – Primary prophylaxis"], ["mac2", "MAC – Treatment"], ["mac3", "MAC – Secondary prophylaxis"], ["hp3", "H. pylori – Triple therapy"], ["hp4", "H. pylori – Quadruple therapy"]],
+    "sections": [
+     {"cat": "ข้อบ่งใช้", "title": "1. เกณฑ์ด้านข้อบ่งใช้ (Indications criteria)", "summary": "1. เกณฑ์ด้านข้อบ่งใช้", "items": [
+      {"id": "1.1", "for": ["resp"], "text": "ใช้สำหรับการติดเชื้อของทางเดินหายใจในกรณีที่ใช้ยาอื่นไม่ได้ หรือไม่ได้ผล"},
+      {"id": "1.2", "for": ["mac1", "mac2", "mac3"], "text": "ใช้ในข้อบ่งใช้ primary prophylaxis, secondary prophylaxis หรือใช้รักษาการติดเชื้อ Mycobacterium avium complex (MAC) ในผู้ป่วยที่ติดเชื้อเอชไอวี"},
+      {"id": "1.3", "for": ["hp3", "hp4"], "text": "ใช้ใน triple therapy หรือ quadruple therapy สำหรับกำจัดเชื้อ Helicobacter pylori (H. pylori) หลังจากได้รับการตรวจยืนยันว่ามีเชื้อแล้ว"}
+     ]},
+     {"cat": "ข้อปฏิบัติก่อนการใช้ยา", "title": "2. เกณฑ์ด้านข้อปฏิบัติในการรักษา (Process indications criteria) · 2.1 ข้อปฏิบัติก่อนการใช้ยา Clarithromycin", "summary": "2.1 ข้อปฏิบัติก่อนการใช้ยา", "items": [
+      {"id": "2.1.1-1", "sub": "2.1.1 ข้อปฏิบัติก่อนการใช้ยา (ทั่วไป)", "text": "ผู้ป่วยไม่มีประวัติแพ้ยาในกลุ่ม Macrolides"},
+      {"id": "2.1.1-2", "text": "ผู้ป่วยไม่ตั้งครรภ์"},
+      {"id": "2.1.1-3", "text": "ผู้ป่วยไม่มีความผิดปกติของตับในระดับปานกลางถึงรุนแรง"},
+      {"id": "2.1.1-4", "text": "มีการตรวจ CBC เช่น Hb, Hct, WBC, neutrophil และ CD4 (สำหรับผู้ป่วยติดเชื้อเอชไอวี) เป็นต้น ในวันแรกรับ และภายใน 3 เดือนก่อนหน้า (ถ้ามี)"},
+      {"id": "2.1.2.1-1", "for": ["resp"], "sub": "2.1.2.1 โรคติดเชื้อของทางเดินหายใจ", "text": "ผู้ป่วยมีประวัติการได้รับยาปฏิชีวนะอื่นและไม่ประสบความสำเร็จในการรักษาโดยต้องมีการสั่งตรวจเพาะเชื้อและทดสอบความไวต่อยาของเชื้อก่อนเริ่มใช้ยาภายใน 48 ชั่วโมง", "input": "ยาปฏิชีวนะที่ได้รับมาก่อน"},
+      {"id": "2.1.2.1-2", "for": ["resp"], "text": "มีการวัด vital sign เช่น body temperature เป็นต้น ก่อนเริ่มใช้ยาภายใน 48 ชั่วโมง"},
+      {"id": "2.1.2.2-1", "for": ["mac1"], "sub": "2.1.2.2 โรคติดเชื้อ Mycobacterium avium complex", "text": "กรณีใช้ในข้อบ่งใช้ Primary prophylaxis ผู้ป่วยจะต้องมี CD4 <50 cells/mm3 และต้องไม่มีลักษณะทางคลินิกบ่งชี้หรือสงสัยว่าจะมีการติดเชื้อ MAC"},
+      {"id": "2.1.2.2-2", "for": ["mac2"], "sub": "2.1.2.2 โรคติดเชื้อ Mycobacterium avium complex", "text": "กรณีใช้ในข้อบ่งใช้ Treatment ผู้ป่วยมีอาการแสดง เช่น ไข้เรื้อรัง น้ำหนักลด อ่อนเพลีย ท้องเสียเรื้อรัง และเม็ดเลือดขาวต่ำ ร่วมกับมีผลเพาะเชื้อ mycobacteria จากกระแสเลือด"},
+      {"id": "2.1.2.2-3", "for": ["mac3"], "sub": "2.1.2.2 โรคติดเชื้อ Mycobacterium avium complex", "text": "กรณีใช้ในข้อบ่งใช้ Secondary prophylaxis ผู้ป่วยจะต้องเคยเป็น disseminated MAC มาก่อน"},
+      {"id": "2.1.3-1", "for": ["hp3", "hp4"], "sub": "2.1.3 Triple therapy หรือ quadruple therapy สำหรับกำจัดเชื้อ H. pylori", "text": "มีผลตรวจเนื้อเยื่อ (histology) หรือ Rapid urease test ยืนยันว่ามีการติดเชื้อ Helicobacter pylori"}
+     ]},
+     {"cat": "ข้อปฏิบัติระหว่างการใช้ยา", "title": "2.2 ข้อปฏิบัติระหว่างใช้ยา Clarithromycin", "summary": "2.2 ข้อปฏิบัติระหว่างการใช้ยา", "items": [
+      {"id": "2.2.1-1", "for": ["resp"], "sub": "2.2.1 โรคติดเชื้อของทางเดินหายใจ", "text": "มีการวัด vital sign เช่น body temperature, BP เป็นต้น ระหว่างใช้ยา"},
+      {"id": "2.2.2-1", "for": ["mac1"], "sub": "2.2.2 โรคติดเชื้อ Mycobacterium avium complex", "text": "กรณีใช้ในข้อบ่งใช้ Primary prophylaxis ถ้า CD4 ลดลง <50 cells/mm3 แนะนำให้เริ่มยาป้องกันใหม่"},
+      {"id": "2.2.2-2", "for": ["mac2"], "sub": "2.2.2 โรคติดเชื้อ Mycobacterium avium complex", "text": "กรณีใช้ในข้อบ่งใช้ Treatment หากมีอาการรุนแรงควรเพิ่มยากลุ่ม quinolones หรือยากลุ่ม aminoglycosides"},
+      {"id": "2.2.2-3", "for": ["mac3"], "sub": "2.2.2 โรคติดเชื้อ Mycobacterium avium complex", "text": "กรณีใช้ในข้อบ่งใช้ Secondary prophylaxis ถ้า CD4 ลดลง <100 cells/mm3 แนะนำให้เริ่มยาป้องกันใหม่"},
+      {"id": "2.3-1", "for": ["hp3", "hp4"], "sub": "2.3 Triple therapy หรือ quadruple therapy สำหรับกำจัดเชื้อ H. pylori", "text": "กรณีที่ผลการกำจัดเชื้อล้มเหลวให้เปลี่ยนยาปฏิชีวนะตัวใหม่ที่ไม่เคยให้มาก่อน เช่น levofloxacin หรือ bismuth-based quadruple therapy"}
+     ]},
+     {"cat": "ขนาดและวิธีการบริหารยา", "title": "3. เกณฑ์ด้านแบบแผนการใช้ยา (Dosage regimen criteria) · 3.1 ขนาดและวิธีการบริหารยา", "summary": "3.1 ขนาดและวิธีการบริหารยา", "items": [
+      {"id": "3.1.1-1", "for": ["resp"], "sub": "3.1.1 โรคติดเชื้อของทางเดินหายใจ", "text": "Community-acquired pneumonia: Clarithromycin 250 mg รับประทานครั้งละ 1 เม็ด ทุก 12 ชั่วโมง"},
+      {"id": "3.1.2-1", "for": ["mac1"], "sub": "3.1.2 โรคติดเชื้อ Mycobacterium avium complex", "text": "Primary prophylaxis: Clarithromycin 500 mg รับประทานครั้งละ 1 เม็ด ทุก 12 ชั่วโมง"},
+      {"id": "3.1.2-2", "for": ["mac2"], "sub": "3.1.2 โรคติดเชื้อ Mycobacterium avium complex", "text": "การรักษา (Treatment): Clarithromycin 500 mg รับประทานครั้งละ 1 เม็ด ทุก 12 ชั่วโมง ร่วมกับ ethambutol 15 mg/kg/day"},
+      {"id": "3.1.2-3", "for": ["mac3"], "sub": "3.1.2 โรคติดเชื้อ Mycobacterium avium complex", "text": "Secondary prophylaxis: Clarithromycin 500 mg รับประทานครั้งละ 1 เม็ด ทุก 12 ชั่วโมง ร่วมกับ ethambutol 15 mg/kg/day"},
+      {"id": "3.1.3-1", "for": ["hp3"], "sub": "3.1.3 Triple therapy หรือ quadruple therapy สำหรับกำจัดเชื้อ H. pylori", "text": "Triple therapy: Clarithromycin 500 mg + Amoxicillin 1 g (หรือ Metronidazole 400 mg) รับประทานทุก 12 ชั่วโมง ร่วมกับ PPI Standard dose เช่น omeprazole 20 mg รับประทานครั้งละ 1 เม็ด วันละ 2 ครั้ง ก่อนอาหารเช้า-เย็น"},
+      {"id": "3.1.3-2", "for": ["hp4"], "sub": "3.1.3 Triple therapy หรือ quadruple therapy สำหรับกำจัดเชื้อ H. pylori", "text": "Quadruple therapy: Clarithromycin 500 mg + Amoxicillin 1 g + Metronidazole 400 mg รับประทานทุก 12 ชั่วโมง ร่วมกับ PPI Standard dose เช่น omeprazole 20 mg รับประทานครั้งละ 1 เม็ด วันละ 2 ครั้ง ก่อนอาหารเช้า-เย็น"}
+     ]},
+     {"cat": "ระยะเวลาในการรักษา", "title": "3.2 ระยะเวลาในการรักษา", "summary": "3.2 ระยะเวลาในการรักษา", "items": [
+      {"id": "3.2.1-1", "for": ["resp"], "sub": "3.2.1 โรคติดเชื้อของทางเดินหายใจ", "text": "ระยะเวลาในการรักษา 7-14 วัน"},
+      {"id": "3.2.2-1", "for": ["mac1"], "sub": "3.2.2 โรคติดเชื้อ Mycobacterium avium complex", "text": "Primary prophylaxis: ผู้ป่วยผู้ใหญ่ที่ได้รับการรักษาด้วยยาต้านเอชไอวีจน CD4 >100 cells/mm3 นานกว่า 3 เดือน สามารถหยุดยาป้องกันได้"},
+      {"id": "3.2.2-2", "for": ["mac2"], "sub": "3.2.2 โรคติดเชื้อ Mycobacterium avium complex", "text": "การรักษา (Treatment): อย่างน้อย 1 ปี"},
+      {"id": "3.2.2-3", "for": ["mac3"], "sub": "3.2.2 โรคติดเชื้อ Mycobacterium avium complex", "text": "Secondary prophylaxis: หลังได้รับการรักษา MAC มาอย่างน้อย 12 เดือน และไม่มีอาการของโรคสามารถหยุดยารักษา MAC ได้ ผู้ป่วยผู้ใหญ่หลังจากที่ได้รับการรักษาด้วยยาต้านเอชไอวีจนมี CD4 >100 cells/mm3 นานกว่า 6 เดือน สามารถหยุดยาป้องกันได้"},
+      {"id": "3.2.3-1", "for": ["hp3", "hp4"], "sub": "3.2.3 Triple therapy หรือ quadruple therapy สำหรับกำจัดเชื้อ H. pylori", "text": "ระยะเวลาในการรักษา 14 วัน"}
+     ]},
+     {"cat": "อาการไม่พึงประสงค์", "title": "4. อาการไม่พึงประสงค์ (Adverse drug reaction)", "summary": "4. อาการไม่พึงประสงค์", "items": [
+      {"id": "4-1", "text": "ไม่เกิด หรือเกิดอาการไม่พึงประสงค์ที่ไม่รุนแรงและสามารถหายได้เอง เช่น คลื่นไส้ อาเจียน การรับรสผิดปกติ ปวดท้อง ท้องอืดไม่สบายท้อง ปวดศีรษะ หรือมีการเพิ่มระดับเอนไซม์ตับชั่วคราว"},
+      {"id": "4-2", "text": "ไม่เกิดอาการไม่พึงประสงค์ ดังต่อไปนี้ ได้แก่ ปฏิกิริยาภูมิแพ้ เช่น ลมพิษ ผื่น Stevens-Johnson Syndrome anaphylaxis รวมทั้ง leukopenia thrombocytopenia และ pseudomembranous colitis"}
+     ]},
+     {"cat": "อันตรกิริยาระหว่างยา", "title": "5. อันตรกิริยาระหว่างยา (Drug interaction)", "summary": "5. อันตรกิริยาระหว่างยา", "items": [
+      {"id": "5-1", "text": "ไม่มีการใช้ยา clarithromycin ร่วมกับ cisapride, pimozide, terfenadine, astemizole หรือ ergotamine", "input": "ยาที่ใช้ร่วม ได้แก่"}
+     ]}
+    ]
+   }
+  ]
+ },
+ {
+  "key": "adr",
+  "group": "ความปลอดภัยด้านยา",
+  "title": "แพ้ยา / ADR",
   "patient": true,
   "date_label": "วันที่ประเมิน",
   "fields": [

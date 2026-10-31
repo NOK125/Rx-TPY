@@ -65,6 +65,10 @@ data/          ฐานข้อมูล SQLite ในเครื่อง �
   บรรทัดละช่วง "10-30: คำแนะนำ" (10 ≤ ค่า < 30) อ่านด้วย `parseBands` / `renalRule` กฎตรวจอยู่ใน `renalCheck` (ฝั่งเบราว์เซอร์ทั้งหมด)
   ผลตรวจเก็บในหน่วยความจำ บันทึกลงงาน `renal_check` เฉพาะผลที่ไม่เหมาะสม/ควรทบทวน เมื่อผู้ใช้กดบันทึก ข้อมูลยาในตารางเป็นข้อมูลทางคลินิก
   ต้องเป็น "ร่าง – รอเภสัชกรตรวจสอบ" จนเภสัชกรตรวจ
+- `view: "due"` = แบบประเมิน DUE เกณฑ์ของแต่ละยาอยู่ใน `forms` ของงาน due (sections → items: id, text, for = ข้อบ่งใช้ที่ใช้ข้อนี้,
+  input/number/auto_min = ช่องค่าที่วัดได้) คำตอบเก็บในช่อง type `answers` (object {id: Y/N/NA, id_v, id_n} ตรวจที่ `clean_field` / `cleanField`)
+  ผลสรุป (`result`, `failed`) คำนวณใน `dueEvaluate` ฝั่งเบราว์เซอร์ ห้ามเปลี่ยน id ของข้อเดิมที่มีข้อมูลแล้ว
+  `openRecordForm` / `openRecord` ส่งต่อไป `openDueForm` / `openDueRecord` สำหรับงานนี้
 - อ่าน .xlsx ในเบราว์เซอร์เอง (`readXlsx` แตก zip ด้วย `inflateRaw` ที่เขียนเอง) ไม่ใช้ไลบรารี ห้ามกลับไปใช้ DecompressionStream เพราะค้างเงียบใน Chrome บางเครื่อง และช่องเลือกไฟล์ (`pickFile`) ต้องแปะไว้ในหน้า การจับคู่คอลัมน์ Excel อยู่ที่ `mapOffhourSheets`
 
 ## รันและทดสอบ
