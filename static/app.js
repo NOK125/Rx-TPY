@@ -2562,6 +2562,11 @@ let duePeriod = "all";
 let dueDrug = "all";
 
 async function dueView(m) {
+  if (!m.forms?.length) {
+    view.innerHTML = `<div class="toolbar"><h2>${esc(m.title)}</h2></div>
+      <p class="empty">ยังไม่มีแบบประเมิน DUE</p>`;
+    return;
+  }
   view.innerHTML = `<div class="toolbar">
       <h2>${esc(m.title)}</h2>
       <select id="period" aria-label="ช่วงเวลา"></select>
