@@ -48,7 +48,7 @@
  {
   "key": "adr",
   "group": "ความปลอดภัยด้านยา",
-  "title": "แพ้ยา / ADR",
+  "title": "รายงานการประเมิน DUE",
   "patient": true,
   "date_label": "วันที่ประเมิน",
   "fields": [
@@ -136,7 +136,7 @@
  {
   "key": "renal_check",
   "group": "ความปลอดภัยด้านยา",
-  "title": "การใช้ยาในผู้ป่วยที่มีภาวะไตบกพร่อง",
+  "title": "รายงานการใช้ยาในผู้ป่วยที่มีภาวะไตบกพร่อง",
   "view": "renal",
   "patient": true,
   "patient_optional": true,
