@@ -240,7 +240,8 @@ function wireMonth(load) {
 
 function patientAlert(list) {
   const adr = list.filter((r) => r.module === "adr");
-  if (!adr.length) return `<p class="alert muted">ไม่พบประวัติแพ้ยา / ADR ที่บันทึกใน Rx-TPY (ตรวจสอบใน HIS ร่วมด้วย)</p>`;
+  // เมนูแพ้ยา / ADR ถูกซ่อนแล้ว เตือนเฉพาะเมื่อมีบันทึกเดิมของผู้ป่วยรายนี้
+  if (!adr.length) return "";
   return `<p class="alert bad"><b>⚠ มีประวัติแพ้ยา / ADR:</b> ${adr.map((r) =>
     `${esc(r.data.drug)} <small>(${esc([r.data.adr_type, r.data.causality].filter(Boolean).join(", "))})</small>`).join(", ")}</p>`;
 }
@@ -3567,7 +3568,7 @@ async function patientView() {
   }
   const list = await api("GET", `/records?hn=${encodeURIComponent(patientHN)}`);
   const name = list.find((r) => r.patient_name)?.patient_name || "";
-  const patientModules = MODULES.filter((m) => m.patient);
+  const patientModules = MODULES.filter((m) => m.patient && !m.hidden);
   $("#result").innerHTML = `<section class="card">
       <h2>HN ${esc(patientHN)}${name ? ` · ${esc(name)}` : ""}</h2>
       ${patientAlert(list)}

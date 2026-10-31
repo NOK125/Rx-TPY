@@ -189,6 +189,7 @@
   "key": "adr",
   "group": "ความปลอดภัยด้านยา",
   "title": "แพ้ยา / ADR",
+  "hidden": true,
   "patient": true,
   "date_label": "วันที่ประเมิน",
   "fields": [
