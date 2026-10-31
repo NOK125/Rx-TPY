@@ -431,6 +431,20 @@ td.col-wide { min-width: 18rem; }
 .due-summary { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; gap: .35rem; }
 .due-summary li { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .35rem .6rem; border-radius: 8px; background: var(--bg); }
 .due-summary li.total { font-weight: 600; background: var(--soft); }
+.due-detail { padding: 0; margin-bottom: .8rem; }
+.due-detail > summary { cursor: pointer; padding: .9rem 1rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .6rem; color: var(--text); }
+.due-detail > summary small { color: var(--muted); }
+.due-detail-count { margin-left: auto; font-size: .88rem; color: var(--primary); font-weight: 600; }
+.due-detail-body { padding: 0 1rem 1rem; border-top: 1px solid var(--border); }
+.due-detail-body h3 { margin: 1rem 0 .4rem; }
+.due-detail-body h4, .due-criteria h4 { margin: .9rem 0 .35rem; font-size: .95rem; }
+.due-detail-body h4 small { font-weight: 400; color: var(--muted); }
+.due-criteria ul { margin: 0; padding-left: 1.2rem; display: grid; gap: .25rem; line-height: 1.55; }
+.due-criteria li.h { list-style: none; margin-left: -1.2rem; font-weight: 600; }
+.due-criteria .refs { padding-left: 1.4rem; font-size: .85rem; color: var(--muted); display: grid; gap: .2rem; }
+.due-ref { margin: 0 0 .8rem; border: 1px solid var(--border); border-radius: 10px; padding: .5rem .8rem; }
+.due-ref > summary { color: var(--primary); }
+.bad-text { color: var(--bad); font-weight: 600; }
 .hn-info { margin-bottom: .9rem; }
 .meta { color: var(--muted); font-size: .85rem; margin: .8rem 0 0; }
 .pre { white-space: pre-line; overflow-wrap: anywhere; }

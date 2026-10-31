@@ -2388,6 +2388,7 @@ function openDueForm(m, rec = null, preset = {}) {
   dlg.className = "wide";
   dlg.innerHTML = dialogShell(`${rec ? "แก้ไข" : ""}แบบประเมินความเหมาะสมในการใช้ยา (DUE)`, `
     <p class="hint"><b>${esc(form.heading)}</b><br>ตอบ "ใช่" ทุกข้อที่ประเมินจึงสรุปว่า "เหมาะสม" · ข้อที่ไม่เกี่ยวข้องเลือก "ไม่ประเมิน"</p>
+    ${form.criteria ? `<details class="due-ref"><summary>ดูเกณฑ์มาตรฐานการใช้ยา ${esc(form.drug)}</summary>${dueCriteriaHtml(form)}</details>` : ""}
     <div class="hn-info" hidden></div>
     <div class="fields two">${patientFields.map((f) => fieldHtml(f, v)).join("")}
       ${form.indications ? `<label class="field full"><span>ข้อบ่งใช้ที่ประเมิน *</span><select id="due-ind">
@@ -2559,6 +2560,8 @@ async function dueView(m) {
     </div>
     <div class="chips-bar" id="drugs"></div>
     <div id="analysis"></div>
+    <h3 class="group-title">รายละเอียดการประเมินรายยา</h3>
+    <div id="due-detail"></div>
     <h3 class="group-title">รายการแบบประเมิน</h3>
     <div class="list" id="list"></div>`;
   const all = await api("GET", `/records?module=${m.key}`);
@@ -2580,6 +2583,7 @@ async function dueView(m) {
     const q = $("#q").value.trim().toLowerCase();
     shown = q ? rows.filter((r) => recordText(r).includes(q) || String(r.data.physician || "").toLowerCase().includes(q)) : rows;
     $("#analysis").innerHTML = all.length ? dueAnalysis(m, rows) : `<p class="hint">ยังไม่มีแบบประเมิน กด "+ ประเมินใหม่" เพื่อเริ่มประเมินการสั่งใช้ยา</p>`;
+    $("#due-detail").innerHTML = dueDetailHtml(m, rows);
     $("#list").innerHTML = table(["วันที่ประเมิน", "HN", "ชื่อผู้ป่วย", "ยา", "ผล", "เกณฑ์ที่ไม่เหมาะสม", "ผู้ประเมิน", ""], shown.map((r) => [
       when(r.record_date, false), esc(r.hn || "-"), esc(r.patient_name || "-"),
       `${esc(r.data.drug)}${r.data.indication ? `<br><small class="muted">${esc(r.data.indication)}</small>` : ""}`,
@@ -2591,12 +2595,69 @@ async function dueView(m) {
   $("#q").oninput = draw;
   bind({
     drug: (k) => { dueDrug = k; draw(); },
+    printCriteria: (drug) => printDueCriteria(drug),
     new: () => (dueDrug !== "all" ? openDueForm(m, null, { drug: dueDrug }) : chooseDueDrug(m)),
     open: (id) => openRecord(id),
     xlsx: () => (shown.length ? downloadBlob(dueWorkbook(m, shown), `ผลการประเมิน DUE - ${$("#period").selectedOptions[0].text}.xlsx`)
       : toast("ไม่มีข้อมูลในช่วงที่เลือก", true)),
   });
   draw();
+}
+
+// เกณฑ์มาตรฐานการใช้ยา (จากเอกสารของกลุ่มงาน)
+function dueCriteriaHtml(form) {
+  if (!form.criteria) return `<p class="empty">ยังไม่มีเกณฑ์มาตรฐานของยานี้</p>`;
+  const line = (t) => (/^\d+(\.\d+)+\s/.test(t) ? `<li class="h">${esc(t)}</li>` : `<li>${esc(t.replace(/^•\s*/, ""))}</li>`);
+  return `<div class="due-criteria">${form.criteria.map(([h, lines]) => `<h4>${esc(h)}</h4><ul>${lines.map(line).join("")}</ul>`).join("")}
+    ${form.references?.length ? `<h4>เอกสารอ้างอิง</h4><ol class="refs">${form.references.map((r) => `<li>${esc(r)}</li>`).join("")}</ol>` : ""}
+    ${form.source ? `<p class="meta">ที่มา: ${esc(form.source)}</p>` : ""}</div>`;
+}
+
+// ผลการประเมินรายข้อของยา 1 ตัว: จำนวน ใช่ / ไม่ใช่ / ไม่ประเมิน และร้อยละที่ผ่านของแต่ละหมวด
+function dueItemStatsHtml(form, rows) {
+  if (!rows.length) return `<p class="empty">ยังไม่มีการประเมินยานี้ในช่วงที่เลือก</p>`;
+  const evals = rows.map((r) => dueEvaluate(form, dueIndicationKey(form, r.data.indication), r.data.answers || {}));
+  const pct = (a, b) => (b ? `${(a * 100 / b).toFixed(1)}%` : "-");
+  return form.sections.map((s) => {
+    const statuses = evals.map((ev) => ev.sections.find((x) => x.title === s.title)?.status).filter((st) => st === "ok" || st === "bad");
+    const good = statuses.filter((st) => st === "ok").length;
+    const body = s.items.map((it) => {
+      const vals = rows.map((r) => r.data.answers?.[it.id]).filter(Boolean);
+      const y = vals.filter((v) => v === "Y").length;
+      const n = vals.filter((v) => v === "N").length;
+      const na = vals.filter((v) => v === "NA").length;
+      const nums = it.number ? rows.map((r) => r.data.answers?.[`${it.id}_v`]).filter((x) => x != null && x !== "" && Number.isFinite(Number(x))).map(Number) : [];
+      const avg = nums.length ? `<br><small class="muted">${esc(it.input)} เฉลี่ย ${num(nums.reduce((a, b) => a + b, 0) / nums.length)} (${nums.length} ราย)</small>` : "";
+      return [esc(it.id.replace(/-\d+$/, "")), `${it.sub ? `<small class="muted">${esc(it.sub)}</small><br>` : ""}${esc(it.text)}${avg}`,
+        [vals.length ? num(y) : "-", "num"], [vals.length ? `<span class="${n ? "bad-text" : ""}">${num(n)}</span>` : "-", "num"],
+        [vals.length ? num(na) : "-", "num"], [vals.length ? pct(y, y + n) : "-", "num"]];
+    });
+    return `<h4>${esc(s.title)} <small>${statuses.length ? `เหมาะสม ${good}/${statuses.length} ราย (${pct(good, statuses.length)})` : "ยังไม่มีการประเมินหมวดนี้"}</small></h4>
+      ${table(["ข้อ", "เกณฑ์การประเมิน", ["ใช่", "num"], ["ไม่ใช่", "num"], ["ไม่ประเมิน", "num"], ["ร้อยละผ่าน", "num"]], body, "-")}`;
+  }).join("");
+}
+
+function dueDetailHtml(m, rows) {
+  const forms = (m.forms || []).filter((f) => dueDrug === "all" || f.drug === dueDrug);
+  return forms.map((f) => {
+    const list = rows.filter((r) => r.data.drug === f.drug);
+    const good = list.filter((r) => r.data.result === "เหมาะสม").length;
+    return `<details class="card due-detail" ${dueDrug !== "all" ? "open" : ""}>
+      <summary><b>${esc(f.drug)}</b> <small>${esc(f.heading)}</small>
+        <span class="due-detail-count">${list.length ? `ประเมิน ${num(list.length)} ราย · เหมาะสม ${list.length ? ((good * 100) / list.length).toFixed(1) : 0}%` : "ยังไม่มีการประเมิน"}</span></summary>
+      <div class="due-detail-body">
+        <h3>ผลการประเมินรายข้อ</h3>${dueItemStatsHtml(f, list)}
+        <h3>เกณฑ์มาตรฐานการใช้ยา ${esc(f.drug)}</h3>${dueCriteriaHtml(f)}
+        <div class="doc-actions">${btn("printCriteria", "พิมพ์เกณฑ์มาตรฐาน", f.drug)}</div>
+      </div></details>`;
+  }).join("");
+}
+
+function printDueCriteria(drug) {
+  const f = dueForm(drug);
+  $("#print").innerHTML = `<div class="report"><h1>เกณฑ์มาตรฐานการใช้ยา ${esc(f.drug)}</h1>
+    <p class="center">กลุ่มงานเภสัชกรรมและคุ้มครองผู้บริโภค โรงพยาบาลตาพระยา</p>${dueCriteriaHtml(f)}</div>`;
+  window.print();
 }
 
 function dueAnalysis(m, rows) {
