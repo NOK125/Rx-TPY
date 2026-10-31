@@ -2324,6 +2324,8 @@ async function drugsafetyView(m) {
 // สรุปผล: ต้องตอบ "ใช่" ทุกข้อที่ประเมินจึง "เหมาะสม" ข้อที่ไม่เกี่ยวกับข้อบ่งใช้ที่เลือกจะไม่แสดง
 
 const DUE_ANSWER = { Y: "ใช่", N: "ไม่ใช่", NA: "ไม่ประเมิน" };
+// ตัวเลือกในแบบประเมิน: ใช่ = เหมาะสม ได้ 1 คะแนน, ไม่ใช่ = 0 คะแนน
+const DUE_CHOICES = [["Y", "ใช่"], ["N", "ไม่ใช่"]];
 const dueForm = (drug) => (MOD.due?.forms || []).find((f) => f.drug === drug);
 const dueIndicationLabel = (form, key) => (form.indications || []).find(([k]) => k === key)?.[1] || "";
 const dueIndicationKey = (form, label) => (form.indications || []).find(([, l]) => l === label)?.[0] || "";
@@ -2339,18 +2341,25 @@ function dueEvaluate(form, ind, answers) {
   const sections = dueSections(form, ind).map((s) => {
     const vals = s.items.map((it) => answers[it.id]);
     const status = vals.some((v) => !v) ? "incomplete" : vals.includes("N") ? "bad" : vals.every((v) => v === "NA") ? "na" : "ok";
-    return { ...s, status, missing: vals.filter((v) => !v).length };
+    const counted = vals.filter((v) => v !== "NA");
+    return { ...s, status, missing: vals.filter((v) => !v).length, score: vals.filter((v) => v === "Y").length, max: counted.length };
   });
   const missing = sections.reduce((n, s) => n + s.missing, 0) + (form.indications && !ind ? 1 : 0);
   const failed = [...new Set(sections.filter((s) => s.status === "bad").map((s) => s.cat))];
-  return { sections, missing, failed, result: missing ? "" : failed.length ? "ไม่เหมาะสม" : "เหมาะสม" };
+  const score = sections.reduce((n, s) => n + s.score, 0);
+  const max = sections.reduce((n, s) => n + s.max, 0);
+  return { sections, missing, failed, score, max, result: missing ? "" : failed.length ? "ไม่เหมาะสม" : "เหมาะสม" };
 }
 
 const DUE_SECTION_BADGE = { ok: ["เหมาะสม", "ok"], bad: ["ไม่เหมาะสม", "bad"], na: ["ไม่ประเมิน", "muted"], incomplete: ["ยังตอบไม่ครบ", "warn"] };
 const dueResultBadge = (r) => (r ? badge(r, r === "เหมาะสม" ? "ok" : "bad") : badge("ยังประเมินไม่ครบ", "warn"));
 
+const dueScoreText = (score, max) => `${score}/${max} คะแนน${max ? ` (${Math.round(score * 100 / max)}%)` : ""}`;
+
 function dueSummaryHtml(ev) {
-  return `<ul class="due-summary">${ev.sections.map((s) => `<li><span>${esc(s.summary)}</span>${badge(...DUE_SECTION_BADGE[s.status])}</li>`).join("")}
+  return `<ul class="due-summary">${ev.sections.map((s) => `<li><span>${esc(s.summary)}</span>
+      <span class="due-score">${dueScoreText(s.score, s.max)} ${badge(...DUE_SECTION_BADGE[s.status])}</span></li>`).join("")}
+    <li class="total"><span>คะแนนรวม (ข้อที่ตอบ "ใช่")</span><span class="due-score">${dueScoreText(ev.score, ev.max)}</span></li>
     <li class="total"><span>สรุปผลการประเมินการใช้ยา</span>${dueResultBadge(ev.result)}</li></ul>`;
 }
 
@@ -2387,7 +2396,7 @@ function openDueForm(m, rec = null, preset = {}) {
   ];
   dlg.className = "wide";
   dlg.innerHTML = dialogShell(`${rec ? "แก้ไข" : ""}แบบประเมินความเหมาะสมในการใช้ยา (DUE)`, `
-    <p class="hint"><b>${esc(form.heading)}</b><br>ตอบ "ใช่" ทุกข้อที่ประเมินจึงสรุปว่า "เหมาะสม" · ข้อที่ไม่เกี่ยวข้องเลือก "ไม่ประเมิน"</p>
+    <p class="hint"><b>${esc(form.heading)}</b><br>แต่ละข้อเลือก "ใช่" (เหมาะสม ได้ 1 คะแนน) หรือ "ไม่ใช่" (0 คะแนน) · ต้องได้ "ใช่" ทุกข้อจึงสรุปว่า "เหมาะสม"</p>
     ${form.criteria ? `<details class="due-ref"><summary>ดูเกณฑ์มาตรฐานการใช้ยา ${esc(form.drug)}</summary>${dueCriteriaHtml(form)}</details>` : ""}
     <div class="hn-info" hidden></div>
     <div class="fields two">${patientFields.map((f) => fieldHtml(f, v)).join("")}
@@ -2411,7 +2420,7 @@ function openDueForm(m, rec = null, preset = {}) {
         const head = it.sub && it.sub !== sub ? `<div class="due-sub">${esc((sub = it.sub))}</div>` : "";
         return `${head}<div class="due-item" data-id="${esc(it.id)}">
           <div class="due-text"><b>${esc(it.id.replace(/-\d+$/, ""))}</b> ${esc(it.text)}</div>
-          <div class="due-answer" role="radiogroup" aria-label="${esc(it.id)}">${Object.entries(DUE_ANSWER).map(([k, l]) =>
+          <div class="due-answer" role="radiogroup" aria-label="${esc(it.id)}">${DUE_CHOICES.map(([k, l]) =>
             `<label class="due-opt ${k}"><input type="radio" name="due_${esc(it.id)}" value="${k}" ${answers[it.id] === k ? "checked" : ""}>${l}</label>`).join("")}</div>
           ${it.input ? `<label class="due-input"><span>${esc(it.input)}</span><input ${it.number ? 'type="number" step="any"' : ""} data-val="${esc(it.id)}" value="${esc(answers[it.id + "_v"] || "")}"></label>` : ""}
           <input class="due-note" data-note="${esc(it.id)}" placeholder="หมายเหตุ" value="${esc(answers[it.id + "_n"] || "")}" aria-label="หมายเหตุข้อ ${esc(it.id)}">
@@ -2445,16 +2454,16 @@ function openDueForm(m, rec = null, preset = {}) {
   const formEl = wireDialog(async (_, f) => {
     const ev = dueEvaluate(form, ind, answers);
     if (form.indications && !ind) throw new Error("กรุณาเลือกข้อบ่งใช้ที่ประเมิน");
-    if (ev.missing) throw new Error(`ยังประเมินไม่ครบ ${num(ev.missing)} ข้อ (เลือก ใช่ / ไม่ใช่ / ไม่ประเมิน ทุกข้อ)`);
+    if (ev.missing) throw new Error(`ยังประเมินไม่ครบ ${num(ev.missing)} ข้อ (เลือก ใช่ หรือ ไม่ใช่ ทุกข้อ)`);
     // เก็บเฉพาะคำตอบของข้อที่ประเมินตามข้อบ่งใช้ที่เลือก
     const ids = new Set(ev.sections.flatMap((s) => s.items.map((it) => it.id)));
     const kept = Object.fromEntries(Object.entries(answers).filter(([k, val]) => val && ids.has(k.replace(/_[vn]$/, ""))));
     const body = {
       module: m.key, ...formValues(f, [...patientFields, ...tailFields]), drug: form.drug,
-      indication: dueIndicationLabel(form, ind), answers: kept, result: ev.result, failed: ev.failed,
+      indication: dueIndicationLabel(form, ind), answers: kept, result: ev.result, failed: ev.failed, score: ev.score, score_max: ev.max,
     };
     await api(rec ? "PUT" : "POST", rec ? `/records/${rec.id}` : "/records", body);
-    toast(`บันทึกแล้ว: ${ev.result}`);
+    toast(`บันทึกแล้ว: ${ev.result} · ${dueScoreText(ev.score, ev.max)}`);
     refresh();
   });
   const hn = $("[name=hn]", formEl);
@@ -2489,7 +2498,7 @@ function openDueRecord(rec) {
       ${info("วันที่ประเมิน", when(rec.record_date, false))}${info("HN", esc(rec.hn))}${info("ชื่อผู้ป่วย", esc(rec.patient_name))}
       ${info("AN", esc(d.an || "-"))}${info("แผนก", esc(d.dept || "-"))}${info("แพทย์ผู้ทำการรักษา", esc(d.physician || "-"))}
       ${d.indication ? info("ข้อบ่งใช้ที่ประเมิน", esc(d.indication)) : ""}${info("ผู้ประเมิน", esc(d.evaluator || "-"))}
-      ${info("สรุปผล", dueResultBadge(d.result))}
+      ${info("สรุปผล", dueResultBadge(d.result))}${ev ? info("คะแนน", `<b>${dueScoreText(ev.score, ev.max)}</b>`) : ""}
     </div>
     ${criteria}
     ${ev ? `<h3 class="form-section">5. สรุปผลการประเมินความเหมาะสมในการใช้ยา</h3>${dueSummaryHtml(ev)}` : ""}
@@ -2535,7 +2544,8 @@ function printDue(rec) {
         <td class="center">${mark(it.id, "Y")}</td><td class="center">${mark(it.id, "N")}</td>
         <td>${ans[it.id] === "NA" ? "ไม่ประเมิน " : ""}${esc(ans[it.id + "_n"] || "")}</td></tr>`).join("")}`).join("")}
       <tr class="sec"><td colspan="5"><b>สรุปผลการประเมินความเหมาะสมในการใช้ยา (ต้องตอบ “ใช่” ทุกข้อเท่านั้นจึงจะสรุปการประเมินว่า “เหมาะสม”)</b></td></tr>
-      ${ev.sections.map((s) => `<tr><td colspan="2">${esc(s.summary)}</td><td colspan="3">${esc(DUE_SECTION_BADGE[s.status][0])}</td></tr>`).join("")}
+      ${ev.sections.map((s) => `<tr><td colspan="2">${esc(s.summary)}</td><td colspan="3">${esc(DUE_SECTION_BADGE[s.status][0])} (${dueScoreText(s.score, s.max)})</td></tr>`).join("")}
+      <tr><td colspan="2">คะแนนรวม (ข้อที่ตอบ “ใช่”)</td><td colspan="3"><b>${dueScoreText(ev.score, ev.max)}</b></td></tr>
       <tr><td colspan="2"><b>สรุปผลการประเมินการใช้ยา ${esc(d.drug)}</b></td><td colspan="3"><b>${esc(d.result || "-")}</b></td></tr>
     </tbody></table>
     ${d.action ? `<p><b>การดำเนินการ / ข้อเสนอแนะ:</b> <span class="pre">${esc(d.action)}</span></p>` : ""}
@@ -2584,9 +2594,10 @@ async function dueView(m) {
     shown = q ? rows.filter((r) => recordText(r).includes(q) || String(r.data.physician || "").toLowerCase().includes(q)) : rows;
     $("#analysis").innerHTML = all.length ? dueAnalysis(m, rows) : `<p class="hint">ยังไม่มีแบบประเมิน กด "+ ประเมินใหม่" เพื่อเริ่มประเมินการสั่งใช้ยา</p>`;
     $("#due-detail").innerHTML = dueDetailHtml(m, rows);
-    $("#list").innerHTML = table(["วันที่ประเมิน", "HN", "ชื่อผู้ป่วย", "ยา", "ผล", "เกณฑ์ที่ไม่เหมาะสม", "ผู้ประเมิน", ""], shown.map((r) => [
+    $("#list").innerHTML = table(["วันที่ประเมิน", "HN", "ชื่อผู้ป่วย", "ยา", ["คะแนน", "num"], "ผล", "เกณฑ์ที่ไม่เหมาะสม", "ผู้ประเมิน", ""], shown.map((r) => [
       when(r.record_date, false), esc(r.hn || "-"), esc(r.patient_name || "-"),
       `${esc(r.data.drug)}${r.data.indication ? `<br><small class="muted">${esc(r.data.indication)}</small>` : ""}`,
+      [r.data.score_max ? `${num(r.data.score)}/${num(r.data.score_max)}` : "-", "num"],
       dueResultBadge(r.data.result), esc((r.data.failed || []).join(", ") || "-"), esc(r.data.evaluator || "-"),
       actions(btn("open", "ดู", r.id)),
     ]), q ? "ไม่พบแบบประเมินที่ค้นหา" : "ยังไม่มีแบบประเมินในช่วงนี้");
@@ -2613,7 +2624,7 @@ function dueCriteriaHtml(form) {
     ${form.source ? `<p class="meta">ที่มา: ${esc(form.source)}</p>` : ""}</div>`;
 }
 
-// ผลการประเมินรายข้อของยา 1 ตัว: จำนวน ใช่ / ไม่ใช่ / ไม่ประเมิน และร้อยละที่ผ่านของแต่ละหมวด
+// ผลการประเมินรายข้อของยา 1 ตัว: จำนวน ใช่ / ไม่ใช่ และร้อยละที่ผ่านของแต่ละหมวด
 function dueItemStatsHtml(form, rows) {
   if (!rows.length) return `<p class="empty">ยังไม่มีการประเมินยานี้ในช่วงที่เลือก</p>`;
   const evals = rows.map((r) => dueEvaluate(form, dueIndicationKey(form, r.data.indication), r.data.answers || {}));
@@ -2625,15 +2636,14 @@ function dueItemStatsHtml(form, rows) {
       const vals = rows.map((r) => r.data.answers?.[it.id]).filter(Boolean);
       const y = vals.filter((v) => v === "Y").length;
       const n = vals.filter((v) => v === "N").length;
-      const na = vals.filter((v) => v === "NA").length;
       const nums = it.number ? rows.map((r) => r.data.answers?.[`${it.id}_v`]).filter((x) => x != null && x !== "" && Number.isFinite(Number(x))).map(Number) : [];
       const avg = nums.length ? `<br><small class="muted">${esc(it.input)} เฉลี่ย ${num(nums.reduce((a, b) => a + b, 0) / nums.length)} (${nums.length} ราย)</small>` : "";
       return [esc(it.id.replace(/-\d+$/, "")), `${it.sub ? `<small class="muted">${esc(it.sub)}</small><br>` : ""}${esc(it.text)}${avg}`,
         [vals.length ? num(y) : "-", "num"], [vals.length ? `<span class="${n ? "bad-text" : ""}">${num(n)}</span>` : "-", "num"],
-        [vals.length ? num(na) : "-", "num"], [vals.length ? pct(y, y + n) : "-", "num"]];
+        [vals.length ? pct(y, y + n) : "-", "num"]];
     });
     return `<h4>${esc(s.title)} <small>${statuses.length ? `เหมาะสม ${good}/${statuses.length} ราย (${pct(good, statuses.length)})` : "ยังไม่มีการประเมินหมวดนี้"}</small></h4>
-      ${table(["ข้อ", "เกณฑ์การประเมิน", ["ใช่", "num"], ["ไม่ใช่", "num"], ["ไม่ประเมิน", "num"], ["ร้อยละผ่าน", "num"]], body, "-")}`;
+      ${table(["ข้อ", "เกณฑ์การประเมิน", ["ใช่", "num"], ["ไม่ใช่", "num"], ["ร้อยละผ่าน", "num"]], body, "-")}`;
   }).join("");
 }
 
@@ -2705,6 +2715,12 @@ function dueAnalysis(m, rows) {
       ${kpi("จำนวนที่ประเมิน", num(total), `ผู้ป่วย ${num(patients)} คน`)}
       ${kpi("เหมาะสม", rate(ok, total), `${num(ok)} ราย`)}
       ${kpi("ไม่เหมาะสม", rate(total - ok, total), `${num(total - ok)} ราย`)}
+      ${(() => {
+        const scored = rows.filter((r) => r.data.score_max);
+        const pts = scored.reduce((s, r) => s + Number(r.data.score), 0);
+        const full = scored.reduce((s, r) => s + Number(r.data.score_max), 0);
+        return kpi("คะแนนเฉลี่ย", full ? `${(pts * 100 / full).toFixed(1)}%` : "-", scored.length ? `จาก ${num(scored.length)} ราย` : "");
+      })()}
       ${kpi("เกณฑ์ที่ไม่เหมาะสมบ่อยที่สุด", cats[0] ? `${num(cats[0].value)} ราย` : "-", esc(cats[0]?.label || "ไม่มี"))}
     </section>
     <div class="grid2 analysis">
@@ -2718,10 +2734,10 @@ function dueAnalysis(m, rows) {
 
 function dueWorkbook(m, rows) {
   const sheets = [];
-  const head = ["วันที่ประเมิน", "HN", "ชื่อผู้ป่วย", "AN", "แผนก", "แพทย์ผู้ทำการรักษา", "ยา", "ข้อบ่งใช้", "สรุปผล", "เกณฑ์ที่ไม่เหมาะสม", "การดำเนินการ", "ผู้ประเมิน"];
+  const head = ["วันที่ประเมิน", "HN", "ชื่อผู้ป่วย", "AN", "แผนก", "แพทย์ผู้ทำการรักษา", "ยา", "ข้อบ่งใช้", "คะแนน", "คะแนนเต็ม", "สรุปผล", "เกณฑ์ที่ไม่เหมาะสม", "การดำเนินการ", "ผู้ประเมิน"];
   const base = (r) => [when(r.record_date, false), r.hn || "", r.patient_name || "", r.data.an || "", r.data.dept || "", r.data.physician || "",
-    r.data.drug, r.data.indication || "", r.data.result || "", (r.data.failed || []).join(", "), r.data.action || "", r.data.evaluator || ""];
-  sheets.push({ name: "สรุปทุกยา", bold: new Set([0]), widths: [12, 10, 22, 10, 7, 20, 30, 24, 11, 30, 30, 20], rows: [head, ...rows.map(base)] });
+    r.data.drug, r.data.indication || "", r.data.score ?? "", r.data.score_max ?? "", r.data.result || "", (r.data.failed || []).join(", "), r.data.action || "", r.data.evaluator || ""];
+  sheets.push({ name: "สรุปทุกยา", bold: new Set([0]), widths: [12, 10, 22, 10, 7, 20, 30, 24, 8, 10, 11, 30, 30, 20], rows: [head, ...rows.map(base)] });
   // ชีตรายยา: คำตอบรายข้อ
   for (const f of m.forms || []) {
     const list = rows.filter((r) => r.data.drug === f.drug);
@@ -2729,8 +2745,9 @@ function dueWorkbook(m, rows) {
     const items = f.sections.flatMap((s) => s.items);
     sheets.push({
       name: f.drug.split(" ")[0], bold: new Set([0]),
-      rows: [[...head.slice(0, 3), "ข้อบ่งใช้", "สรุปผล", ...items.map((it) => `ข้อ ${it.id.replace(/-\d+$/, "")} ${it.text.slice(0, 60)}`)],
-        ...list.map((r) => [when(r.record_date, false), r.hn || "", r.patient_name || "", r.data.indication || "", r.data.result || "",
+      rows: [[...head.slice(0, 3), "ข้อบ่งใช้", "คะแนน", "สรุปผล", ...items.map((it) => `ข้อ ${it.id.replace(/-\d+$/, "")} ${it.text.slice(0, 60)}`)],
+        ...list.map((r) => [when(r.record_date, false), r.hn || "", r.patient_name || "", r.data.indication || "",
+          r.data.score_max ? `${r.data.score}/${r.data.score_max}` : "", r.data.result || "",
           ...items.map((it) => {
             const a = r.data.answers?.[it.id];
             const val = r.data.answers?.[it.id + "_v"];

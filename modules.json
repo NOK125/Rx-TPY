@@ -60,6 +60,8 @@
    {"name": "physician", "label": "แพทย์ผู้ทำการรักษา", "type": "text"},
    {"name": "answers", "label": "ผลการประเมินรายข้อ", "type": "answers", "required": true},
    {"name": "result", "label": "สรุปผลการประเมิน", "type": "select", "required": true, "options": ["เหมาะสม", "ไม่เหมาะสม"]},
+   {"name": "score", "label": "คะแนน (ข้อที่ตอบใช่)", "type": "number", "min": 0},
+   {"name": "score_max", "label": "คะแนนเต็ม", "type": "number", "min": 0},
    {"name": "failed", "label": "เกณฑ์ที่ไม่เหมาะสม", "type": "multi", "options": ["ข้อบ่งใช้", "ข้อปฏิบัติในการรักษา", "ข้อปฏิบัติก่อนการใช้ยา", "ข้อปฏิบัติระหว่างการใช้ยา", "ขนาดและวิธีการบริหารยา", "ระยะเวลาในการรักษา", "ข้อห้ามในการใช้ยา", "อาการไม่พึงประสงค์", "อันตรกิริยาระหว่างยา"]},
    {"name": "action", "label": "การดำเนินการ / ข้อเสนอแนะ", "type": "textarea"},
    {"name": "evaluator", "label": "ผู้ประเมิน", "type": "staff", "required": true}
